@@ -133,7 +133,11 @@ async function main() {
     },
   });
 
-  // 3) Демо-данные — только если пациентов ещё нет
+  // 3) Демо-данные. В production не генерируем — только справочники и админ.
+  if (process.env.NODE_ENV === 'production') {
+    console.log('▶ Сид: production — демо-данные не генерируются (только справочники, настройки, админ).');
+    return;
+  }
   const existing = await prisma.patient.count();
   if (existing > 0) {
     console.log(`▶ Сид: демо-данные уже загружены (${existing} пациентов), пропуск.`);

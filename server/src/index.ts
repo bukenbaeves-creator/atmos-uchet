@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import path from 'path';
+import fs from 'fs';
 import { config } from './lib/config.js';
 import { errorHandler } from './middleware/error.js';
 
@@ -18,6 +20,10 @@ import reconcileRouter from './routes/reconcile.js';
 import kpiRouter from './routes/kpi.js';
 
 const app = express();
+
+// За обратным прокси (Render/Nginx): доверяем заголовкам X-Forwarded-* —
+// нужно для secure-cookie по HTTPS и корректного IP в аудите.
+if (config.nodeEnv === 'production') app.set('trust proxy', 1);
 
 app.use(cors({ origin: config.clientOrigin, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
@@ -37,6 +43,14 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/reconcile', reconcileRouter);
 app.use('/api/kpi', kpiRouter);
+
+// Production: раздаём собранный фронтенд (single-origin) + SPA-fallback.
+// В dev папки public нет — блок пропускается, клиент обслуживает Vite.
+const publicDir = path.resolve(process.cwd(), 'public');
+if (fs.existsSync(publicDir)) {
+  app.use(express.static(publicDir));
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+}
 
 app.use(errorHandler);
 

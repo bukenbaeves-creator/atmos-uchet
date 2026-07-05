@@ -1,4 +1,7 @@
-const BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:4000';
+// В проде фронтенд и API на одном домене -> VITE_API_URL='' (относительные /api).
+// В dev клиент на :5173, API на :4000 -> абсолютный адрес. Пусто ('') оставляем как есть.
+const _apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+const BASE = _apiUrl !== undefined ? _apiUrl : 'http://localhost:4000';
 
 export interface ApiErrorDetail {
   path: string;

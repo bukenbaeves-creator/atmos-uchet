@@ -1,0 +1,24 @@
+# Render Blueprint — разворачивает Postgres + один web-сервис (API + фронтенд).
+# Подключение: Render Dashboard → New → Blueprint → выбрать этот репозиторий.
+databases:
+  - name: atmos-db
+    databaseName: atmos
+    user: atmos
+    plan: free # для продакшена смените на платный (free-БД временная)
+
+services:
+  - type: web
+    name: atmos
+    runtime: docker
+    dockerfilePath: ./Dockerfile.prod
+    plan: free # free засыпает при простое; для клиники — платный
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: atmos-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true # Render сгенерирует секрет автоматически
+      - key: NODE_ENV
+        value: production
