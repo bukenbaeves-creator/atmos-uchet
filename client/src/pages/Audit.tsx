@@ -47,7 +47,7 @@ export function Audit() {
     mutationFn: ({ entity, id }: { entity: string; id: number }) =>
       apiPatch(`/${ENTITY_PLURAL[entity]}/${id}/restore`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['audit'] });
+      qc.invalidateQueries(); // обновляем аудит и список восстановленной сущности
       alert('Запись восстановлена');
     },
     onError: () => alert('Не удалось восстановить (возможно, уже восстановлена)'),

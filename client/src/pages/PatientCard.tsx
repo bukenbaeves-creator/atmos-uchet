@@ -32,12 +32,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function PatientCard() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['patient-card', id],
     queryFn: () => apiGet<CardData>(`/patients/${id}/card`),
   });
 
-  if (isLoading || !data) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError || !data)
+    return (
+      <div className="py-12 text-center text-sm text-slate-400">
+        Пациент не найден или данные не загрузились.{' '}
+        <button className="text-brand-600 hover:underline" onClick={() => navigate('/patients')}>
+          К списку пациентов
+        </button>
+      </div>
+    );
   const p = data.patient;
 
   return (

@@ -25,5 +25,6 @@ COPY --from=client /client/dist ./public
 ENV NODE_ENV=production
 EXPOSE 4000
 
-# Применяем схему БД, засеиваем справочники+админа (без демо в проде), запускаем сервер
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && npx prisma db seed && npx tsx src/index.ts"]
+# Применяем схему БД (без --accept-data-loss: при рискованном изменении деплой упадёт,
+# а не удалит данные), засеиваем справочники+админа (без демо в проде), запускаем сервер.
+CMD ["sh", "-c", "npx prisma db push && npx prisma db seed && npx tsx src/index.ts"]

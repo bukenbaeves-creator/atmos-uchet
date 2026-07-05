@@ -32,7 +32,7 @@ function parseDate(v: unknown): string | null {
 
 // Приводим содержимое файла к массиву строк-ячеек
 async function readGrid(buffer: Buffer, filename: string): Promise<string[][]> {
-  const isCsv = /\.csv$/i.test(filename) || (!/\.xlsx?$/i.test(filename) && buffer.slice(0, 4).toString() !== 'PK');
+  const isCsv = /\.csv$/i.test(filename) || (!/\.xlsx?$/i.test(filename) && buffer.slice(0, 2).toString() !== 'PK');
   if (isCsv) {
     const text = buffer.toString('utf8');
     const lines = text.split(/\r?\n/).filter((l) => l.trim());

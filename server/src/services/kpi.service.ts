@@ -42,8 +42,10 @@ export function periodRange(period: Period, dateStr?: string): { from: Date; to:
   }
   if (period === 'quarter') {
     const qStart = Math.floor(ref.month() / 3) * 3;
-    const from = ref.month(qStart).startOf('month');
-    const to = ref.month(qStart + 2).endOf('month');
+    // от начала года, чтобы день 29–31 не «перетекал» в следующий месяц
+    const yearStart = ref.startOf('year');
+    const from = yearStart.add(qStart, 'month').startOf('month');
+    const to = yearStart.add(qStart + 2, 'month').endOf('month');
     return { from: from.toDate(), to: to.toDate(), label: `${Math.floor(qStart / 3) + 1} кв. ${ref.format('YYYY')}` };
   }
   return { from: ref.startOf('month').toDate(), to: ref.endOf('month').toDate(), label: ref.format('MM.YYYY') };

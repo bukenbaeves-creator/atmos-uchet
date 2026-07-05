@@ -247,14 +247,15 @@ function FieldControl({
     case 'time':
       return <input type="time" className="input" value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} />;
     case 'money':
-      return <MoneyInput value={value as number | string | null} onChange={onChange} />;
+      return <MoneyInput value={value as number | string | null} onChange={onChange} required={field.required} />;
     case 'phone':
-      return <PhoneInput value={(value as string) ?? ''} onChange={(v) => onChange(v)} />;
+      return <PhoneInput value={(value as string) ?? ''} onChange={(v) => onChange(v)} required={field.required} />;
     case 'number':
       return (
         <input
           type="number"
           className="input"
+          required={field.required}
           value={(value as string | number) ?? ''}
           min={0}
           step={1}
@@ -262,6 +263,14 @@ function FieldControl({
         />
       );
     default:
-      return <input type="text" className="input" value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} />;
+      return (
+        <input
+          type="text"
+          className="input"
+          required={field.required}
+          value={(value as string) ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
   }
 }

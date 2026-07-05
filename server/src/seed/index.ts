@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { hashPassword } from '../lib/auth.js';
 import { normalizePhone } from '../lib/phone.js';
@@ -95,9 +96,18 @@ async function main() {
     await prisma.payment.updateMany({ where: { terminal: oldV }, data: { terminal: newV } });
   }
 
-  // 1b) Настройки по умолчанию (ставки KPI, коды регистрации) — если ещё не заданы,
-  //     правки админа не перетираем.
-  for (const [key, value] of Object.entries({ ...KPI_DEFAULTS, ...REG_CODE_DEFAULTS })) {
+  // 1b) Настройки по умолчанию. Ставки KPI — всегда. Коды регистрации: в production
+  //     НЕ ставим публичные дефолты (иначе любой зарегистрируется по коду из репозитория) —
+  //     берём из env или оставляем пустыми (регистрация закрыта, пока админ не задаст коды).
+  const isProd = process.env.NODE_ENV === 'production';
+  const settingDefaults: Record<string, string> = { ...KPI_DEFAULTS };
+  if (isProd) {
+    settingDefaults.reg_code_operator = process.env.REG_CODE_OPERATOR ?? '';
+    settingDefaults.reg_code_admin = process.env.REG_CODE_ADMIN ?? '';
+  } else {
+    Object.assign(settingDefaults, REG_CODE_DEFAULTS);
+  }
+  for (const [key, value] of Object.entries(settingDefaults)) {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
   }
 
@@ -111,30 +121,35 @@ async function main() {
     await prisma.operation.update({ where: { id: o.id }, data: { manager: pick(MANAGERS) } });
   }
 
-  // 2) Пользователи
-  const admin = await prisma.user.upsert({
-    where: { login: 'admin' },
-    update: {},
-    create: {
-      login: 'admin',
-      fio: 'Администратор клиники',
-      role: 'admin',
-      passwordHash: await hashPassword('admin123'),
-    },
-  });
-  await prisma.user.upsert({
-    where: { login: 'operator' },
-    update: {},
-    create: {
-      login: 'operator',
-      fio: 'Оператор (ресепшн)',
-      role: 'operator',
-      passwordHash: await hashPassword('operator123'),
-    },
-  });
+  // 2) Администратор. Пароль: из ADMIN_PASSWORD; иначе в проде — случайный (печатаем
+  //    один раз в лог), в dev — admin123. Существующего админа не трогаем.
+  let admin = await prisma.user.findUnique({ where: { login: 'admin' } });
+  if (!admin) {
+    const pwd = process.env.ADMIN_PASSWORD || (isProd ? randomBytes(9).toString('base64url') : 'admin123');
+    admin = await prisma.user.create({
+      data: { login: 'admin', fio: 'Администратор клиники', role: 'admin', passwordHash: await hashPassword(pwd) },
+    });
+    if (isProd && !process.env.ADMIN_PASSWORD) {
+      console.log(`\n⚠  СГЕНЕРИРОВАН ПАРОЛЬ АДМИНИСТРАТОРА (смените после входа): admin / ${pwd}\n`);
+    }
+  }
+
+  // Демо-оператор — только в dev. В проде пользователей заводит админ вручную.
+  if (!isProd) {
+    await prisma.user.upsert({
+      where: { login: 'operator' },
+      update: {},
+      create: {
+        login: 'operator',
+        fio: 'Оператор (ресепшн)',
+        role: 'operator',
+        passwordHash: await hashPassword('operator123'),
+      },
+    });
+  }
 
   // 3) Демо-данные. В production не генерируем — только справочники и админ.
-  if (process.env.NODE_ENV === 'production') {
+  if (isProd) {
     console.log('▶ Сид: production — демо-данные не генерируются (только справочники, настройки, админ).');
     return;
   }

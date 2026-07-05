@@ -32,7 +32,9 @@ export function useItem<T>(entity: string, id: number | null) {
 // Универсальные мутации CRUD
 export function useCrudMutations(entity: string) {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: [entity] });
+  // Инвалидируем все запросы: запись может влиять на другие вкладки — платная
+  // консультация создаёт платёж в «Кассе», платёж меняет остаток операции, и т.д.
+  const invalidate = () => qc.invalidateQueries();
 
   const create = useMutation({
     mutationFn: (data: unknown) => apiPost(`/${entity}`, data),

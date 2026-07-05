@@ -1,3 +1,8 @@
+// В production JWT_SECRET обязателен — иначе можно подделать токены со слабым дефолтом.
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET не задан в production — приложение остановлено в целях безопасности');
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   jwtSecret: process.env.JWT_SECRET ?? 'dev_secret_change_me',

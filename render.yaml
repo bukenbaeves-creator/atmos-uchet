@@ -4,6 +4,7 @@ databases:
   - name: atmos-db
     databaseName: atmos
     user: atmos
+    region: frankfurt # ЕС; учитывайте требования к хранению ПДн
     plan: free # для продакшена смените на платный (free-БД временная)
 
 services:
@@ -11,6 +12,7 @@ services:
     name: atmos
     runtime: docker
     dockerfilePath: ./Dockerfile.prod
+    region: frankfurt # тот же регион, что и БД (для internal-подключения)
     plan: free # free засыпает при простое; для клиники — платный
     healthCheckPath: /api/health
     envVars:

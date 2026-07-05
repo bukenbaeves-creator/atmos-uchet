@@ -56,6 +56,12 @@ router.put(
     const before = await prisma.user.findUnique({ where: { id }, select: publicUser });
     if (!before) throw notFound('Пользователь не найден');
     const { password, ...rest } = updateSchema.parse(req.body);
+    // Защита от блокировки системы: нельзя лишить прав/деактивировать последнего админа
+    const losesAdmin = (rest.role && rest.role !== 'admin') || rest.active === false;
+    if (before.role === 'admin' && before.active && losesAdmin) {
+      const activeAdmins = await prisma.user.count({ where: { role: 'admin', active: true } });
+      if (activeAdmins <= 1) throw badRequest('Нельзя лишить прав единственного администратора');
+    }
     const data: Record<string, unknown> = { ...rest };
     if (password) data.passwordHash = await hashPassword(password);
     const updated = await prisma.user.update({ where: { id }, data, select: publicUser });

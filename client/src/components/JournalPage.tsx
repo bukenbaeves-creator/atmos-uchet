@@ -50,7 +50,7 @@ export function JournalPage<T extends JournalRecord>({
   const setParam = (k: string, v: unknown) => setParams((s) => ({ ...s, [k]: v, ...(k !== 'page' ? { page: 1 } : {}) }));
 
   const query = { ...params, ...(extraParams ?? {}) };
-  const { data, isLoading } = useList<T>(entity, query);
+  const { data, isLoading, isError } = useList<T>(entity, query);
   const { create, update, remove, restore } = useCrudMutations(entity);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -120,6 +120,8 @@ export function JournalPage<T extends JournalRecord>({
 
       {isLoading ? (
         <Spinner />
+      ) : isError ? (
+        <EmptyState>Не удалось загрузить данные. Обновите страницу или войдите заново.</EmptyState>
       ) : !data || data.items.length === 0 ? (
         <EmptyState>Записей не найдено</EmptyState>
       ) : (
