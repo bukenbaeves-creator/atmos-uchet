@@ -1,0 +1,178 @@
+// Prisma schema — приложение учёта клиники ATMOS
+// Категориальные поля хранятся строкой (совместимо с исходными Excel) и
+// валидируются по таблице DictionaryItem в сервисном слое. Вычисляемые поля
+// (total_due, paid, balance, fully_paid, month, конверсия, выручка) не хранятся —
+// считаются в сервисном слое, чтобы исключить расхождения.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  operator
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  login        String   @unique
+  fio          String
+  role         Role     @default(operator)
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Универсальный справочник. category: city | doctor | surgeon | op_type |
+// pay_method | terminal | service_type | consultation_stage | vid | zapis
+model DictionaryItem {
+  id        Int      @id @default(autoincrement())
+  category  String
+  label     String
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([category, label])
+  @@index([category])
+}
+
+model Patient {
+  id        Int       @id @default(autoincrement())
+  fio       String
+  birthDate DateTime?
+  phone     String    @unique
+  city      String?
+
+  consultations Consultation[]
+  operations    Operation[]
+  payments      Payment[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([fio])
+}
+
+model Consultation {
+  id                Int       @id @default(autoincrement())
+  patient           Patient   @relation(fields: [patientId], references: [id])
+  patientId         Int
+  dateZapis         DateTime?
+  dateKons          DateTime?
+  time              String?
+  vid               String?
+  interestOperation String?
+  doctor            String?
+  manager           String? // менеджер, записавший на консультацию (для KPI)
+  stage             String?
+  resultDetails     String?
+  payDate           DateTime?
+  payMethod         String?
+  terminal          String?
+  payNote           String?
+  amount            Decimal?  @db.Decimal(14, 2)
+
+  operations Operation[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([patientId])
+  @@index([stage])
+}
+
+model Operation {
+  id               Int           @id @default(autoincrement())
+  patient          Patient       @relation(fields: [patientId], references: [id])
+  patientId        Int
+  consultation     Consultation? @relation(fields: [consultationId], references: [id])
+  consultationId   Int?
+  zapis            String?
+  manager          String? // менеджер, записавший на операцию (для KPI)
+  dateOp           DateTime?
+  opType           String?
+  surgeon          String?
+  anesthesiologist String?
+  cost             Decimal       @default(0) @db.Decimal(14, 2)
+  anesthesiaCost   Decimal       @default(0) @db.Decimal(14, 2)
+  contractSigned   Boolean       @default(false)
+  note             String?
+
+  payments Payment[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([patientId])
+  @@index([dateOp])
+}
+
+model Payment {
+  id          Int        @id @default(autoincrement())
+  patient     Patient    @relation(fields: [patientId], references: [id])
+  patientId   Int
+  operation   Operation? @relation(fields: [operationId], references: [id])
+  operationId Int?
+  date        DateTime?
+  serviceType String?
+  opType      String? // вид операции — заполняется, если услуга «Операция»/«Консультация»
+  amount      Decimal    @default(0) @db.Decimal(14, 2)
+  payMethod   String?
+  terminal    String?
+  payNote     String?
+  zapis       String?
+  doctor      String?
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([patientId])
+  @@index([operationId])
+  @@index([date])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  userFio   String?
+  action    String // create | update | delete | restore | login
+  entity    String
+  entityId  Int?
+  before    Json?
+  after     Json?
+  ip        String?
+  timestamp DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([timestamp])
+}
+
+// Настройки приложения (ключ-значение). Используется для ставок KPI.
+model Setting {
+  key   String @id
+  value String
+}

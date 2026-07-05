@@ -1,0 +1,6 @@
+# Нормализация переводов строк: в репозитории всегда LF (важно для Docker/Linux)
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.xlsx binary

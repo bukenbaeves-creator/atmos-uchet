@@ -1,0 +1,19 @@
+# Override для разработки с hot reload (bind-mount исходников).
+# Использовать ТОЛЬКО если проект лежит вне OneDrive (например C:\atmos-uchet),
+# иначе монтирование папки нестабильно и контейнеры теряют файлы.
+#
+# Запуск:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  server:
+    volumes:
+      - ./server:/app
+      - server_node_modules:/app/node_modules
+
+  client:
+    volumes:
+      - ./client:/app
+      - client_node_modules:/app/node_modules
+
+volumes:
+  server_node_modules:
+  client_node_modules:
