@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { JournalPage } from '../components/JournalPage';
 import { useDictionaries } from '../lib/dictionaries';
 import { formatDate, formatMoney } from '../lib/format';
@@ -6,7 +7,7 @@ import type { Column } from '../components/Table';
 
 interface Payment {
   id: number;
-  patient?: { fio: string };
+  patient?: { id: number; fio: string };
   date: string | null;
   serviceType: string | null;
   opType: string | null;
@@ -22,6 +23,11 @@ interface Payment {
 
 // «Касса» — единая точка учёта денег. Отсюда данные автоматически попадают в
 // отчёт «Предоплаты и остатки» (привязка платежа к операции).
+// Если услуга про операцию (Предоплата/Операция) и операция не выбрана — она создаётся
+// на лету, поэтому просим дату/тип/стоимость/менеджера.
+const newOp = (v: Record<string, unknown>) =>
+  (v.serviceType === 'Предоплата' || v.serviceType === 'Операция') && !v.operationId;
+
 const fields: Field[] = [
   { name: 'patient', label: 'Пациент', type: 'patientBlock', required: true, span: 2 },
   { name: 'operationId', label: 'За что платёж (операция)', type: 'operation', span: 2 },
@@ -37,12 +43,9 @@ const fields: Field[] = [
     showWhen: (v) =>
       v.serviceType === 'Операция' || v.serviceType === 'Консультация' || v.serviceType === 'Предоплата',
   },
-  {
-    name: 'operationCost',
-    label: 'Стоимость операции (если операция новая)',
-    type: 'money',
-    showWhen: (v) => v.serviceType === 'Предоплата',
-  },
+  { name: 'operationDate', label: 'Дата операции', type: 'date', required: true, showWhen: newOp },
+  { name: 'manager', label: 'Менеджер (кто записал операцию)', type: 'select', dict: 'manager', required: true, showWhen: newOp },
+  { name: 'operationCost', label: 'Стоимость операции', type: 'money', showWhen: newOp },
   { name: 'payMethod', label: 'Способ оплаты', type: 'select', dict: 'pay_method', required: true },
   {
     name: 'terminal',
@@ -59,8 +62,27 @@ const fields: Field[] = [
 
 export function Cashbox() {
   const { data: dict } = useDictionaries();
+  const navigate = useNavigate();
   const columns: Column<Payment>[] = [
-    { header: 'Пациент', cell: (p) => <span className="font-medium">{p.patient?.fio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (p) =>
+        p.patient ? (
+          <button
+            type="button"
+            title="Открыть карточку пациента"
+            className="cursor-pointer font-medium text-brand-700 hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/patients/${p.patient!.id}`);
+            }}
+          >
+            {p.patient.fio}
+          </button>
+        ) : (
+          '—'
+        ),
+    },
     { header: 'Дата', cell: (p) => formatDate(p.date) },
     { header: 'Услуга', cell: (p) => (p.opType ? `${p.serviceType ?? '—'} · ${p.opType}` : p.serviceType ?? '—') },
     { header: 'Сумма', align: 'right', cell: (p) => <span className="font-semibold">{formatMoney(p.amount)}</span> },

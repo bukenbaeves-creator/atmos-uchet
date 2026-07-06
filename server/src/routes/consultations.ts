@@ -77,6 +77,7 @@ const router = makeCrudRouter({
           patientId: c.patientId as number,
           date: (c.payDate as Date) ?? (c.dateKons as Date) ?? new Date(),
           serviceType: 'Консультация',
+          opType: (c.interestOperation as string) ?? null, // вид операции из консультации
           amount,
           payMethod: (c.payMethod as string) ?? null,
           terminal: (c.terminal as string) ?? null,
