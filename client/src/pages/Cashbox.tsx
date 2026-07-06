@@ -64,25 +64,7 @@ export function Cashbox() {
   const { data: dict } = useDictionaries();
   const navigate = useNavigate();
   const columns: Column<Payment>[] = [
-    {
-      header: 'Пациент',
-      cell: (p) =>
-        p.patient ? (
-          <button
-            type="button"
-            title="Открыть карточку пациента"
-            className="cursor-pointer font-medium text-brand-700 hover:underline"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/patients/${p.patient!.id}`);
-            }}
-          >
-            {p.patient.fio}
-          </button>
-        ) : (
-          '—'
-        ),
-    },
+    { header: 'Пациент', cell: (p) => <span className="font-medium">{p.patient?.fio ?? '—'}</span> },
     { header: 'Дата', cell: (p) => formatDate(p.date) },
     { header: 'Услуга', cell: (p) => (p.opType ? `${p.serviceType ?? '—'} · ${p.opType}` : p.serviceType ?? '—') },
     { header: 'Сумма', align: 'right', cell: (p) => <span className="font-semibold">{formatMoney(p.amount)}</span> },
@@ -98,11 +80,12 @@ export function Cashbox() {
     <JournalPage<Payment>
       entity="payments"
       title="Касса"
-      subtitle="Журнал платежей. Каждый способ оплаты — отдельная строка."
+      subtitle="Журнал платежей. Клик по строке — карточка пациента."
       columns={columns}
       fields={fields}
       exportJournal="payments"
       newButtonLabel="Платёж"
+      onRowClick={(p) => p.patient && navigate(`/patients/${p.patient.id}`)}
       renderFilters={(params, setParam) => (
         <select
           className="input max-w-xs"
