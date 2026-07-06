@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler, badRequest } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import {
   DICTIONARY_CATEGORIES,
@@ -39,9 +38,9 @@ const itemSchema = z.object({
   active: z.coerce.boolean().default(true),
 });
 
+// Справочниками управляют и операторы, и админы (requireAuth на роутере).
 router.post(
   '/',
-  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = itemSchema.parse(req.body);
     const created = await prisma.dictionaryItem.create({ data });
@@ -52,7 +51,6 @@ router.post(
 
 router.put(
   '/:id',
-  requireAdmin,
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const before = await prisma.dictionaryItem.findUnique({ where: { id } });
@@ -73,7 +71,6 @@ router.put(
 // Деактивация значения (мягко — историю не ломаем)
 router.delete(
   '/:id',
-  requireAdmin,
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const before = await prisma.dictionaryItem.findUnique({ where: { id } });

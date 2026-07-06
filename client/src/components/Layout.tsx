@@ -33,13 +33,17 @@ const SECTIONS: { title?: string; items: NavItem[] }[] = [
       { to: '/', label: 'Дашборд', icon: '📊', end: true },
     ],
   },
+  {
+    title: 'Настройки',
+    items: [{ to: '/dictionaries', label: 'Справочники', icon: '📚' }],
+  },
 ];
 
 const ADMIN_SECTION: { title: string; items: NavItem[] } = {
   title: 'Администрирование',
   items: [
     { to: '/audit', label: 'Аудит', icon: '🕵️' },
-    { to: '/admin', label: 'Пользователи и справочники', icon: '⚙️' },
+    { to: '/admin', label: 'Пользователи', icon: '⚙️' },
   ],
 };
 
@@ -86,6 +90,12 @@ export function Layout() {
       </aside>
 
       <main className="flex-1 overflow-y-auto">
+        {/* Верхняя панель: кто сейчас работает в приложении */}
+        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-6 py-2 text-sm backdrop-blur">
+          <span className="text-slate-400">Вы вошли как:</span>
+          <span className="font-semibold text-slate-700">{user?.fio}</span>
+          <span className="badge bg-brand-50 text-brand-700">{isAdmin ? 'Администратор' : 'Оператор'}</span>
+        </div>
         <div className="mx-auto max-w-7xl p-6">
           <Outlet />
         </div>

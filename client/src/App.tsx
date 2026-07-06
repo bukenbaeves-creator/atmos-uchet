@@ -15,6 +15,7 @@ import { Kpi } from './pages/Kpi';
 import { ErrorCheck } from './pages/ErrorCheck';
 import { Audit } from './pages/Audit';
 import { Admin } from './pages/Admin';
+import { Dictionaries } from './pages/Dictionaries';
 import type { ReactNode } from 'react';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/cashbox" element={<Cashbox />} />
         <Route path="/reconcile" element={<Reconcile />} />
         <Route path="/kpi" element={<Kpi />} />
+        <Route path="/dictionaries" element={<Dictionaries />} />
         <Route path="/errors" element={<ErrorCheck />} />
         <Route
           path="/audit"
