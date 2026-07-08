@@ -56,6 +56,7 @@ const fields: Field[] = [
     label: 'Итог консультации — заполняется после консультации',
     type: 'select',
     dict: 'consultation_stage',
+    allowCustom: true,
   },
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
@@ -63,7 +64,7 @@ const fields: Field[] = [
 // Мини-форма «Итог»: оплата часто вносится заранее, а консультация проходит позже.
 // Оператор может внести итог своей консультации, пока её дата не прошла.
 const resultFields: Field[] = [
-  { name: 'stage', label: 'Итог консультации', type: 'select', dict: 'consultation_stage', span: 2 },
+  { name: 'stage', label: 'Итог консультации', type: 'select', dict: 'consultation_stage', allowCustom: true, span: 2 },
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
 
@@ -139,7 +140,10 @@ export function Consultations() {
             initial={resultFor}
             onSubmit={async (payload) => {
               await apiPatch(`/consultations/${resultFor.id}/result`, payload);
-              await qc.invalidateQueries();
+              // Итог влияет на список консультаций, воронку/отчёты и справочник стадий
+              for (const k of ['consultations', 'dashboard', 'kpi-report', 'dictionaries']) {
+                await qc.invalidateQueries({ queryKey: [k] });
+              }
             }}
             onDone={() => setResultFor(null)}
           />

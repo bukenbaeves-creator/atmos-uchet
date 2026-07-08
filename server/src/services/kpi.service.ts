@@ -1,4 +1,3 @@
-import dayjs from 'dayjs';
 import { prisma } from '../lib/prisma.js';
 import { KPI_DEFAULTS } from '../constants.js';
 
@@ -34,37 +33,58 @@ export async function setRates(rates: KpiRates): Promise<KpiRates> {
 
 export type Period = 'month' | 'quarter' | 'year';
 
-// Диапазон периода вокруг опорной даты
-export function periodRange(period: Period, dateStr?: string): { from: Date; to: Date; label: string } {
-  const ref = dateStr ? dayjs(dateStr) : dayjs();
+// Диапазон периода в UTC (согласованно с хранением дат как UTC-полночь).
+// Полуоткрытый интервал [from, toExclusive): весь конечный день входит через lt.
+export function periodRange(
+  period: Period,
+  dateStr?: string,
+): { from: Date; toExclusive: Date; label: string } {
+  const ref = dateStr ? new Date(dateStr + 'T00:00:00.000Z') : new Date();
+  const y = ref.getUTCFullYear();
+  const m = ref.getUTCMonth();
   if (period === 'year') {
-    return { from: ref.startOf('year').toDate(), to: ref.endOf('year').toDate(), label: ref.format('YYYY') };
+    return { from: new Date(Date.UTC(y, 0, 1)), toExclusive: new Date(Date.UTC(y + 1, 0, 1)), label: String(y) };
   }
   if (period === 'quarter') {
-    const qStart = Math.floor(ref.month() / 3) * 3;
-    // от начала года, чтобы день 29–31 не «перетекал» в следующий месяц
-    const yearStart = ref.startOf('year');
-    const from = yearStart.add(qStart, 'month').startOf('month');
-    const to = yearStart.add(qStart + 2, 'month').endOf('month');
-    return { from: from.toDate(), to: to.toDate(), label: `${Math.floor(qStart / 3) + 1} кв. ${ref.format('YYYY')}` };
+    const qStart = Math.floor(m / 3) * 3;
+    return {
+      from: new Date(Date.UTC(y, qStart, 1)),
+      toExclusive: new Date(Date.UTC(y, qStart + 3, 1)),
+      label: `${Math.floor(qStart / 3) + 1} кв. ${y}`,
+    };
   }
-  return { from: ref.startOf('month').toDate(), to: ref.endOf('month').toDate(), label: ref.format('MM.YYYY') };
+  return {
+    from: new Date(Date.UTC(y, m, 1)),
+    toExclusive: new Date(Date.UTC(y, m + 1, 1)),
+    label: `${String(m + 1).padStart(2, '0')}.${y}`,
+  };
 }
 
 // Отчёт KPI по менеджерам за период
 export async function kpiReport(period: Period, dateStr?: string) {
-  const { from, to, label } = periodRange(period, dateStr);
+  const { from, toExclusive, label } = periodRange(period, dateStr);
   const rates = await getRates();
 
+  // Записи удалённых пациентов не учитываем в KPI.
   const [cons, ops] = await Promise.all([
     prisma.consultation.groupBy({
       by: ['manager'],
-      where: { deletedAt: null, manager: { not: null }, dateKons: { gte: from, lte: to } },
+      where: {
+        deletedAt: null,
+        manager: { not: null },
+        patient: { is: { deletedAt: null } },
+        dateKons: { gte: from, lt: toExclusive },
+      },
       _count: { _all: true },
     }),
     prisma.operation.groupBy({
       by: ['manager'],
-      where: { deletedAt: null, manager: { not: null }, dateOp: { gte: from, lte: to } },
+      where: {
+        deletedAt: null,
+        manager: { not: null },
+        patient: { is: { deletedAt: null } },
+        dateOp: { gte: from, lt: toExclusive },
+      },
       _count: { _all: true },
     }),
   ]);
@@ -98,7 +118,7 @@ export async function kpiReport(period: Period, dateStr?: string) {
     period,
     label,
     from: from.toISOString(),
-    to: to.toISOString(),
+    to: toExclusive.toISOString(),
     rates,
     rows,
     totals,

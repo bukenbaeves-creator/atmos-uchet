@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, exportUrl } from '../api/client';
 import { formatDate, formatMoney } from '../lib/format';
-import { PageHeader, Spinner, Badge } from '../components/ui';
+import { PageHeader, Spinner, Badge, EmptyState } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 
 interface Row {
@@ -33,7 +33,7 @@ const FILTERS = [
 
 export function Prepayments() {
   const [filter, setFilter] = useState('');
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['prepayments', filter],
     queryFn: () => apiGet<Data>(`/reports/prepayments${filter ? `?filter=${filter}` : ''}`),
   });
@@ -82,7 +82,9 @@ export function Prepayments() {
         ))}
       </div>
 
-      {isLoading || !data ? (
+      {isError ? (
+        <EmptyState>Не удалось загрузить данные. Обновите страницу или войдите заново.</EmptyState>
+      ) : isLoading || !data ? (
         <Spinner />
       ) : (
         <>

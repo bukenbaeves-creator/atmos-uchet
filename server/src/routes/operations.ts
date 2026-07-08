@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { computeOperation } from '../services/compute.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
-import { patientInputSchema, requiredDate, requiredString } from '../schemas.js';
+import { patientInputSchema, requiredDate, requiredString, optionalString, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
 
 const schema = z.object({
@@ -15,11 +15,11 @@ const schema = z.object({
   dateOp: requiredDate('Необходимо указать дату операции'),
   opType: requiredString('Необходимо указать тип операции'),
   surgeon: requiredString('Необходимо указать врача'),
-  anesthesiologist: z.string().optional().nullable(),
-  cost: z.coerce.number({ invalid_type_error: 'Стоимость должна быть числом' }).nonnegative('Стоимость не может быть отрицательной'),
-  anesthesiaCost: z.coerce.number({ invalid_type_error: 'Стоимость наркоза должна быть числом' }).nonnegative().default(0),
+  anesthesiologist: optionalString(200),
+  cost: moneyAmount(),
+  anesthesiaCost: moneyAmount().default(0),
   contractSigned: z.coerce.boolean().default(false),
-  note: z.string().optional().nullable(),
+  note: optionalString(),
 });
 
 const router = makeCrudRouter({
@@ -50,9 +50,9 @@ const router = makeCrudRouter({
     await assertDictionaryValue('manager', d.manager as string | null);
   },
   transform: (row) => ({ ...row, ...computeOperation(row as never) }),
-  prepareData: async (data, req) => {
+  prepareData: async (data, req, ctx) => {
     const { patient, ...rest } = data as Record<string, unknown> & { patient: never };
-    const patientId = await resolvePatient(patient, req);
+    const patientId = await resolvePatient(patient, req, ctx.tx);
     return { ...rest, patientId };
   },
 });

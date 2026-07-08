@@ -27,6 +27,8 @@ interface Payment {
 // на лету, поэтому просим дату/тип/стоимость/менеджера.
 const newOp = (v: Record<string, unknown>) =>
   (v.serviceType === 'Предоплата' || v.serviceType === 'Операция') && !v.operationId;
+// Платёж за консультацию создаёт запись во вкладке «Консультации» — просим её данные
+const konsService = (v: Record<string, unknown>) => v.serviceType === 'Консультация';
 
 const fields: Field[] = [
   { name: 'patient', label: 'Пациент', type: 'patientBlock', required: true, span: 2 },
@@ -44,8 +46,27 @@ const fields: Field[] = [
       v.serviceType === 'Операция' || v.serviceType === 'Консультация' || v.serviceType === 'Предоплата',
   },
   { name: 'operationDate', label: 'Дата операции', type: 'date', required: true, showWhen: newOp },
-  { name: 'manager', label: 'Менеджер (кто записал операцию)', type: 'select', dict: 'manager', required: true, showWhen: newOp },
+  {
+    name: 'manager',
+    label: 'Менеджер (кто записал)',
+    type: 'select',
+    dict: 'manager',
+    required: true,
+    showWhen: (v) => newOp(v) || konsService(v),
+  },
   { name: 'operationCost', label: 'Стоимость операции', type: 'money', showWhen: newOp },
+  // --- консультация (создаётся запись во вкладке «Консультации») ---
+  { name: 'dateKons', label: 'Дата консультации', type: 'date', required: true, showWhen: konsService },
+  { name: 'vid', label: 'Вид консультации', type: 'select', dict: 'vid', required: true, showWhen: konsService },
+  {
+    name: 'stage',
+    label: 'Итог консультации — заполняется после консультации',
+    type: 'select',
+    dict: 'consultation_stage',
+    allowCustom: true,
+    showWhen: konsService,
+  },
+  { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2, showWhen: konsService },
   { name: 'payMethod', label: 'Способ оплаты', type: 'select', dict: 'pay_method', required: true },
   {
     name: 'terminal',
@@ -80,7 +101,7 @@ export function Cashbox() {
     <JournalPage<Payment>
       entity="payments"
       title="Касса"
-      subtitle="Журнал платежей. Клик по строке — карточка пациента."
+      subtitle="Журнал платежей. Платёж «Консультация» создаёт запись во вкладке «Консультации». Клик по строке — карточка пациента."
       columns={columns}
       fields={fields}
       exportJournal="payments"

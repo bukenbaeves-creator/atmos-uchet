@@ -8,16 +8,17 @@ import { normalizePhone } from '../lib/phone.js';
 import { computeOperation } from '../services/compute.js';
 import { serialize } from '../lib/serialize.js';
 import { patientSearchOR } from '../lib/search.js';
-import { requiredString, optionalDate } from '../schemas.js';
+import { requiredString, birthDateSchema } from '../schemas.js';
 
 const schema = z.object({
-  fio: requiredString('Необходимо указать ФИО'),
+  fio: requiredString('Необходимо указать ФИО', 200),
+  // Валидируем ПОСЛЕ нормализации: «abc» прошёл бы min(3), но нормализуется в пусто.
   phone: z
     .string({ required_error: 'Необходимо указать телефон', invalid_type_error: 'Необходимо указать телефон' })
-    .min(3, 'Необходимо указать телефон')
-    .transform(normalizePhone),
-  birthDate: optionalDate,
-  city: requiredString('Необходимо указать город'),
+    .transform(normalizePhone)
+    .refine((v) => v.replace(/\D/g, '').length >= 10, 'Необходимо указать корректный телефон'),
+  birthDate: birthDateSchema,
+  city: requiredString('Необходимо указать город', 100),
 });
 
 const router = makeCrudRouter({

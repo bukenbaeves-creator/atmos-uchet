@@ -95,6 +95,7 @@ model Consultation {
 
   @@index([patientId])
   @@index([stage])
+  @@index([dateKons])
 }
 
 model Operation {

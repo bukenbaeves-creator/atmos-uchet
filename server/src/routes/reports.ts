@@ -6,10 +6,18 @@ import { dashboard, prepayments, errorCheck, type Period } from '../services/rep
 const router = Router();
 router.use(requireAuth);
 
+// Границы периода в UTC (согласованно с хранением дат как UTC-полночь):
+// from = 00:00 UTC начального дня; to = 00:00 UTC дня ПОСЛЕ конечного (полуоткрытый
+// интервал [from, toExclusive) — dateFilter применит lt, чтобы весь конечный день вошёл).
 function parsePeriod(q: Record<string, unknown>): Period {
-  const from = typeof q.from === 'string' && q.from ? new Date(q.from) : undefined;
-  const to = typeof q.to === 'string' && q.to ? new Date(q.to + 'T23:59:59') : undefined;
-  return { from, to };
+  const from = typeof q.from === 'string' && q.from ? new Date(q.from + 'T00:00:00.000Z') : undefined;
+  let toExclusive: Date | undefined;
+  if (typeof q.to === 'string' && q.to) {
+    const d = new Date(q.to + 'T00:00:00.000Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    toExclusive = d;
+  }
+  return { from, toExclusive };
 }
 
 router.get(

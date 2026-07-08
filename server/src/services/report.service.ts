@@ -1,48 +1,59 @@
 import { prisma } from '../lib/prisma.js';
 import { serialize } from '../lib/serialize.js';
-import { computeOperation } from './compute.js';
+import { computeOperation, round2 } from './compute.js';
 import { config } from '../lib/config.js';
 import { PAY_STAGES, PREPAYMENT_SERVICE } from '../constants.js';
 
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
+// Порог сравнения баланса с нулём (полкопейки).
+const CENT = 0.005;
 
+// Ключ месяца в UTC — согласованно с хранением дат (UTC-полночь из <input type=date>)
+// и с границами периода (тоже UTC), чтобы разбивка не «переезжала» в соседний месяц.
 function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
 export interface Period {
   from?: Date;
-  to?: Date;
+  toExclusive?: Date; // верхняя граница НЕ включительно (полуоткрытый интервал)
 }
 
 function dateFilter(period: Period, field: string) {
-  if (!period.from && !period.to) return {};
+  if (!period.from && !period.toExclusive) return {};
   return {
     [field]: {
       ...(period.from ? { gte: period.from } : {}),
-      ...(period.to ? { lte: period.to } : {}),
+      ...(period.toExclusive ? { lt: period.toExclusive } : {}),
     },
   };
 }
 
 // Дашборд (раздел 9.1): KPI + серии для графиков
 export async function dashboard(period: Period) {
+  // Исключаем записи удалённых пациентов/операций: иначе их деньги продолжали бы
+  // попадать в выручку (мягкое удаление на уровне БД не каскадируется).
   const [payments, operations, consultations] = await Promise.all([
     prisma.payment.findMany({
-      where: { deletedAt: null, ...dateFilter(period, 'date') },
+      where: {
+        deletedAt: null,
+        patient: { is: { deletedAt: null } },
+        OR: [{ operationId: null }, { operation: { is: { deletedAt: null } } }],
+        ...dateFilter(period, 'date'),
+      },
       select: { amount: true, date: true, payMethod: true, doctor: true },
     }),
     prisma.operation.findMany({
-      where: { deletedAt: null, ...dateFilter(period, 'dateOp') },
+      where: { deletedAt: null, patient: { is: { deletedAt: null } }, ...dateFilter(period, 'dateOp') },
       select: { id: true, surgeon: true, cost: true, anesthesiaCost: true },
     }),
     prisma.consultation.findMany({
-      where: { deletedAt: null, ...dateFilter(period, 'dateKons') },
+      where: { deletedAt: null, patient: { is: { deletedAt: null } }, ...dateFilter(period, 'dateKons') },
       select: { stage: true },
     }),
   ]);
 
-  const revenue = payments.reduce((s, p) => s + num(p.amount), 0);
+  const revenue = round2(payments.reduce((s, p) => s + num(p.amount), 0));
 
   // Конверсия в оплату
   const known = consultations.filter((c) => c.stage);
@@ -58,7 +69,7 @@ export async function dashboard(period: Period) {
   }
   const revenueByMonth = [...byMonthMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([month, value]) => ({ month, value }));
+    .map(([month, value]) => ({ month, value: round2(value) }));
 
   // Способы оплаты
   const byMethodMap = new Map<string, number>();
@@ -67,7 +78,7 @@ export async function dashboard(period: Period) {
     byMethodMap.set(k, (byMethodMap.get(k) ?? 0) + num(p.amount));
   }
   const byPayMethod = [...byMethodMap.entries()]
-    .map(([name, value]) => ({ name, value }))
+    .map(([name, value]) => ({ name, value: round2(value) }))
     .sort((a, b) => b.value - a.value);
 
   // Воронка по стадиям
@@ -85,7 +96,7 @@ export async function dashboard(period: Period) {
     byDoctorMap.set(p.doctor, (byDoctorMap.get(p.doctor) ?? 0) + num(p.amount));
   }
   const byDoctor = [...byDoctorMap.entries()]
-    .map(([name, value]) => ({ name, value }))
+    .map(([name, value]) => ({ name, value: round2(value) }))
     .sort((a, b) => b.value - a.value);
 
   return {
@@ -105,7 +116,7 @@ export async function dashboard(period: Period) {
 // Предоплаты и остатки (раздел 9.5)
 export async function prepayments(filter: string | undefined) {
   const operations = await prisma.operation.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, patient: { is: { deletedAt: null } } },
     include: {
       patient: { select: { id: true, fio: true, phone: true } },
       payments: { where: { deletedAt: null } },
@@ -116,9 +127,11 @@ export async function prepayments(filter: string | undefined) {
   let rows = operations.map((op) => {
     const c = computeOperation(op);
     // Аванс (предоплата) — сумма платежей по операции с видом услуги «Предоплата»
-    const prepaid = op.payments
-      .filter((p) => !p.deletedAt && p.serviceType === PREPAYMENT_SERVICE)
-      .reduce((s, p) => s + num(p.amount), 0);
+    const prepaid = round2(
+      op.payments
+        .filter((p) => !p.deletedAt && p.serviceType === PREPAYMENT_SERVICE)
+        .reduce((s, p) => s + num(p.amount), 0),
+    );
     return {
       ...serialize({
         id: op.id,
@@ -136,16 +149,16 @@ export async function prepayments(filter: string | undefined) {
     };
   });
 
-  if (filter === 'balance') rows = rows.filter((r) => r.balance > 0);
+  if (filter === 'balance') rows = rows.filter((r) => r.balance > CENT);
   else if (filter === 'noContract') rows = rows.filter((r) => !r.contractSigned);
   else if (filter === 'fullyPaid') rows = rows.filter((r) => r.fullyPaid);
 
   const totals = rows.reduce(
     (acc, r) => {
-      acc.totalDue += r.totalDue;
-      acc.prepaid += r.prepaid;
-      acc.paid += r.paid;
-      acc.balance += r.balance;
+      acc.totalDue = round2(acc.totalDue + r.totalDue);
+      acc.prepaid = round2(acc.prepaid + r.prepaid);
+      acc.paid = round2(acc.paid + r.paid);
+      acc.balance = round2(acc.balance + r.balance);
       return acc;
     },
     { totalDue: 0, prepaid: 0, paid: 0, balance: 0 },

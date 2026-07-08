@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { asyncHandler, badRequest } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import { computeOperation } from '../services/compute.js';
+import { writeAudit } from '../services/audit.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -139,6 +140,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const journal = req.params.journal.replace(/\.xlsx$/, '');
     const { columns, rows, sheet } = await buildData(journal);
+
+    // Массовая выгрузка ПДн/финансов — фиксируем в аудите (кто, что, сколько строк).
+    await writeAudit(req, { action: 'export', entity: journal, after: { rows: rows.length } });
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet(sheet);

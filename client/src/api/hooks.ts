@@ -21,20 +21,26 @@ export function useList<T>(entity: string, params: Record<string, unknown> = {})
   });
 }
 
-export function useItem<T>(entity: string, id: number | null) {
-  return useQuery({
-    queryKey: [entity, 'item', id],
-    queryFn: () => apiGet<T>(`/${entity}/${id}`),
-    enabled: id != null,
-  });
-}
+// Какие наборы данных затрагивает изменение сущности. Запись влияет и на другие
+// вкладки (платёж меняет остаток операции и предоплаты, консультация — воронку/KPI),
+// поэтому инвалидируем связанные ключи точечно, а не «все запросы разом».
+// Ключи соответствуют реальным queryKey страниц (dashboard/prepayments/kpi-report/
+// patient-card/errors — отдельные ключи, а не «reports»). invalidateQueries по
+// префиксу накрывает и производные (['patients','picker',…] и т.п.).
+const RELATED_KEYS: Record<string, string[]> = {
+  payments: ['payments', 'operations', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries'],
+  consultations: ['consultations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries'],
+  operations: ['operations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors'],
+  patients: ['patients', 'consultations', 'operations', 'payments', 'prepayments', 'dashboard', 'patient-card', 'errors'],
+};
 
 // Универсальные мутации CRUD
 export function useCrudMutations(entity: string) {
   const qc = useQueryClient();
-  // Инвалидируем все запросы: запись может влиять на другие вкладки — платная
-  // консультация создаёт платёж в «Кассе», платёж меняет остаток операции, и т.д.
-  const invalidate = () => qc.invalidateQueries();
+  const invalidate = () => {
+    const keys = RELATED_KEYS[entity] ?? [entity];
+    for (const k of keys) qc.invalidateQueries({ queryKey: [k] });
+  };
 
   const create = useMutation({
     mutationFn: (data: unknown) => apiPost(`/${entity}`, data),

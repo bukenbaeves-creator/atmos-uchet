@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
-import { assertDictionaryValue } from '../services/dictionary.service.js';
+import { assertDictionaryValue, ensureDictionaryValue } from '../services/dictionary.service.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
-import { patientInputSchema, requiredString, requiredDate, optionalDate } from '../schemas.js';
+import { patientInputSchema, requiredString, optionalString, requiredDate, optionalDate, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
 import { writeAudit } from '../services/audit.service.js';
 import { asyncHandler, forbidden, notFound } from '../lib/http.js';
@@ -23,14 +23,14 @@ const schema = z
     doctor: requiredString('Необходимо указать врача'),
     manager: requiredString('Необходимо указать менеджера'),
     // Итог (стадия воронки) заполняется позже админом — необязателен при создании.
-    stage: z.string().optional().nullable(),
-    resultDetails: z.string().optional().nullable(),
+    stage: optionalString(200),
+    resultDetails: optionalString(),
     // Оплата — необязательна (консультация может быть бесплатной)
-    amount: z.coerce.number().nonnegative().optional().nullable(),
+    amount: moneyAmount().optional().nullable(),
     payDate: optionalDate,
     payMethod: z.string().optional().nullable(),
     terminal: z.string().optional().nullable(),
-    payNote: z.string().optional().nullable(),
+    payNote: optionalString(),
   })
   // Если указана сумма — нужен способ оплаты
   .refine((d) => !d.amount || d.amount <= 0 || !!d.payMethod, {
@@ -57,7 +57,7 @@ const router = makeCrudRouter({
   },
   search: (t) => ({ OR: [...patientSearchOR(t, true), { stage: { contains: t, mode: 'insensitive' } }] }),
   validate: async (d) => {
-    await assertDictionaryValue('consultation_stage', d.stage as string | null);
+    // stage не проверяем: свой итог авто-добавляется в справочник (prepareData)
     await assertDictionaryValue('vid', d.vid as string | null);
     await assertDictionaryValue('op_type', d.interestOperation as string | null);
     await assertDictionaryValue('doctor', d.doctor as string | null);
@@ -65,17 +65,21 @@ const router = makeCrudRouter({
     await assertDictionaryValue('pay_method', d.payMethod as string | null);
     await assertDictionaryValue('terminal', d.terminal as string | null);
   },
-  prepareData: async (data, req) => {
+  prepareData: async (data, req, ctx) => {
     const { patient, ...rest } = data as Record<string, unknown> & { patient: never };
-    const patientId = await resolvePatient(patient, req);
+    const patientId = await resolvePatient(patient, req, ctx.tx);
+    // Свой итог (введён вручную) — добавляем в справочник «Стадии итога»
+    rest.stage = typeof rest.stage === 'string' && rest.stage.trim() ? rest.stage.trim() : null;
+    await ensureDictionaryValue('consultation_stage', rest.stage as string | null, req, ctx.tx);
     return { ...rest, patientId };
   },
-  // Указана стоимость консультации -> платёж автоматически попадает в «Кассу»
-  afterCreate: async (created, req) => {
+  // Указана стоимость консультации -> платёж автоматически попадает в «Кассу».
+  // Только при создании (не при обновлении) — иначе правка консультации плодила бы платежи.
+  afterCreate: async (created, req, tx) => {
     const c = created as Record<string, unknown>;
     const amount = Number(c.amount ?? 0);
     if (amount > 0) {
-      const pay = await prisma.payment.create({
+      const pay = await tx.payment.create({
         data: {
           patientId: c.patientId as number,
           date: (c.payDate as Date) ?? (c.dateKons as Date) ?? new Date(),
@@ -90,7 +94,7 @@ const router = makeCrudRouter({
           updatedBy: req.user!.id,
         },
       });
-      await writeAudit(req, { action: 'create', entity: 'payment', entityId: pay.id, after: pay });
+      await writeAudit(req, { action: 'create', entity: 'payment', entityId: pay.id, after: pay }, tx);
     }
   },
 });
@@ -107,8 +111,8 @@ function konsNotPassed(dateKons: Date | null): boolean {
 }
 
 const resultSchema = z.object({
-  stage: z.string().optional().nullable(),
-  resultDetails: z.string().optional().nullable(),
+  stage: optionalString(200),
+  resultDetails: optionalString(),
 });
 
 // Итог консультации отдельным действием: оплата часто вносится заранее, а сама
@@ -131,13 +135,18 @@ router.patch(
       throw forbidden('Итог можно изменить только по своей консультации, пока её дата не прошла');
     }
     const data = resultSchema.parse(req.body);
-    await assertDictionaryValue('consultation_stage', data.stage ?? null);
-    const updated = await prisma.consultation.update({
-      where: { id },
-      data: { stage: data.stage ?? null, resultDetails: data.resultDetails ?? null, updatedBy: req.user!.id },
-      include: { patient: true },
+    const stageLabel = data.stage?.trim() ? data.stage.trim() : null;
+    const updated = await prisma.$transaction(async (tx) => {
+      // Свой итог (введён вручную) — добавляем в справочник «Стадии итога»
+      await ensureDictionaryValue('consultation_stage', stageLabel, req, tx);
+      const row = await tx.consultation.update({
+        where: { id },
+        data: { stage: stageLabel, resultDetails: data.resultDetails ?? null, updatedBy: req.user!.id },
+        include: { patient: true },
+      });
+      await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before: existing, after: row }, tx);
+      return row;
     });
-    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before: existing, after: updated });
     res.json(serialize(updated));
   }),
 );

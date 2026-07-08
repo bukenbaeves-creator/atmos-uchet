@@ -31,6 +31,8 @@ export interface Field {
   span?: 1 | 2;
   // Условное отображение: поле показывается/отправляется только когда возвращает true
   showWhen?: (values: Record<string, unknown>) => boolean;
+  // Для select: разрешить ввод своего варианта (он авто-добавится в справочник на сервере)
+  allowCustom?: boolean;
 }
 
 interface Props {
@@ -175,6 +177,90 @@ export function EntityForm({ fields, initial, submitLabel = 'Сохранить'
   );
 }
 
+const CUSTOM_SENTINEL = '__custom__';
+
+// Границы для полей-дат (см. серверную проверку в schemas.ts): [2020 … сегодня+2 года].
+const DATE_INPUT_MIN = '2020-01-01';
+const DATE_INPUT_MAX = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 2);
+  return d.toISOString().slice(0, 10);
+})();
+
+// Выпадающий список с возможностью ввести свой вариант: при выборе «Свой вариант…»
+// селект заменяется текстовым полем. Введённое значение авто-добавится в справочник
+// на сервере при сохранении.
+function SelectWithCustom({
+  value,
+  onChange,
+  options,
+  required,
+}: {
+  value: string;
+  onChange: (v: unknown) => void;
+  options: { id: number; label: string }[];
+  required?: boolean;
+}) {
+  // Режим ручного ввода: включён пользователем или значение не из списка
+  // (например, открыли запись с итогом, которого нет среди активных значений).
+  // Пока справочник не загружен (options пуст) НЕ считаем значение «своим» —
+  // иначе валидное значение мигало бы как ручной ввод.
+  const [manual, setManual] = useState(false);
+  const loaded = options.length > 0;
+  const inList = value === '' || options.some((o) => o.label === value);
+  const customMode = manual || (loaded && !inList);
+
+  if (customMode) {
+    return (
+      <div>
+        <input
+          type="text"
+          className="input"
+          required={required}
+          placeholder="Введите свой вариант…"
+          autoFocus={manual}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          className="mt-1 text-xs text-brand-600 hover:underline"
+          onClick={() => {
+            setManual(false);
+            onChange('');
+          }}
+        >
+          ↩ выбрать из списка
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="input"
+      required={required}
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === CUSTOM_SENTINEL) {
+          setManual(true);
+          onChange('');
+        } else {
+          onChange(e.target.value);
+        }
+      }}
+    >
+      <option value="">— не выбрано —</option>
+      {options.map((o) => (
+        <option key={o.id} value={o.label}>
+          {o.label}
+        </option>
+      ))}
+      <option value={CUSTOM_SENTINEL}>✏ Свой вариант…</option>
+    </select>
+  );
+}
+
 function FieldControl({
   field,
   value,
@@ -205,6 +291,16 @@ function FieldControl({
     case 'patient':
       return <PatientField value={value as number | null} onChange={onChange} />;
     case 'select':
+      if (field.allowCustom) {
+        return (
+          <SelectWithCustom
+            value={(value as string) ?? ''}
+            onChange={onChange}
+            options={opts}
+            required={field.required}
+          />
+        );
+      }
       return (
         <select
           className="input"
@@ -237,11 +333,16 @@ function FieldControl({
         />
       );
     case 'date':
+      // Разумные границы бизнес-дат (совпадают с серверной проверкой): не раньше
+      // 2020 и не позже «сегодня + 2 года». Будущее разрешено (плановые операции,
+      // оплата раньше консультации).
       return (
         <input
           type="date"
           className="input"
           required={field.required}
+          min={DATE_INPUT_MIN}
+          max={DATE_INPUT_MAX}
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
         />

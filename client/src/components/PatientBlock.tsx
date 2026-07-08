@@ -114,6 +114,8 @@ export function PatientBlock({ value, onChange }: { value: PatientValue; onChang
           <input
             type="date"
             className="input"
+            min="1900-01-01"
+            max={new Date().toISOString().slice(0, 10)}
             value={(v.birthDate as string) ?? ''}
             onChange={(e) => set('birthDate', e.target.value)}
           />

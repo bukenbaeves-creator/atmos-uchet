@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 
 type Num = number | Prisma.Decimal | null | undefined;
 const n = (v: Num): number => (v == null ? 0 : typeof v === 'number' ? v : Number(v));
+// Округление до копеек: гасит накопленную погрешность float при сложении сумм.
+export const round2 = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
+// Порог сравнения баланса с нулём (полкопейки) — чтобы 0.000001 не считался долгом.
+const CENT = 0.005;
 
 export interface PaymentLike {
   amount: Num;
@@ -25,16 +29,16 @@ export interface OperationComputed {
 }
 
 export function computeOperation(op: OperationLike): OperationComputed {
-  const totalDue = n(op.cost) + n(op.anesthesiaCost);
-  const paid = (op.payments ?? [])
-    .filter((p) => !p.deletedAt)
-    .reduce((sum, p) => sum + n(p.amount), 0);
-  const balance = totalDue - paid;
+  const totalDue = round2(n(op.cost) + n(op.anesthesiaCost));
+  const paid = round2(
+    (op.payments ?? []).filter((p) => !p.deletedAt).reduce((sum, p) => sum + n(p.amount), 0),
+  );
+  const balance = round2(totalDue - paid);
   return {
     totalDue,
     paid,
     balance,
-    fullyPaid: balance <= 0,
+    fullyPaid: balance <= CENT,
     month: op.dateOp ? new Date(op.dateOp).getMonth() + 1 : null,
   };
 }

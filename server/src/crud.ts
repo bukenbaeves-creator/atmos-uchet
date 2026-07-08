@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { asyncHandler, badRequest, forbidden, notFound } from './lib/http.js';
+import { asyncHandler, forbidden, notFound } from './lib/http.js';
 import { requireAuth } from './middleware/auth.js';
 import { requireAdmin, canEditRecord } from './middleware/rbac.js';
 import { writeAudit } from './services/audit.service.js';
+import { prisma, type PrismaClientOrTx } from './lib/prisma.js';
+import { cascadeSoftDelete, cascadeRestore } from './services/cascade.service.js';
 import { serialize } from './lib/serialize.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,10 +27,18 @@ export interface CrudConfig {
   validate?: (data: Record<string, unknown>) => Promise<void>;
   // Преобразование строки для ответа (вычисляемые поля)
   transform?: (row: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
-  // Преобразование данных перед записью (например, upsert пациента -> patientId)
-  prepareData?: (data: Record<string, unknown>, req: Request) => Promise<Record<string, unknown>>;
-  // Хук после создания (например, создать связанный платёж из консультации)
-  afterCreate?: (created: Record<string, unknown>, req: Request) => Promise<void>;
+  // Преобразование данных перед записью (например, upsert пациента -> patientId).
+  // ctx.mode различает создание и обновление — для действий «только при создании»
+  // (например, авто-создание консультации из платежа Кассы). ctx.tx — клиент
+  // транзакции: все связанные записи должны создаваться через него (атомарность).
+  prepareData?: (
+    data: Record<string, unknown>,
+    req: Request,
+    ctx: { mode: 'create' | 'update'; tx: PrismaClientOrTx },
+  ) => Promise<Record<string, unknown>>;
+  // Хук после создания (например, создать связанный платёж из консультации).
+  // tx — тот же транзакционный клиент, что и у create.
+  afterCreate?: (created: Record<string, unknown>, req: Request, tx: PrismaClientOrTx) => Promise<void>;
 }
 
 async function present(cfg: CrudConfig, row: Record<string, unknown>) {
@@ -81,19 +91,25 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
     }),
   );
 
-  // Создание
+  // Создание. Всё — в одной транзакции: авто-создание связанных записей
+  // (операция/консультация/платёж) и основная запись либо проходят целиком,
+  // либо откатываются вместе (без «висячих» записей).
   router.post(
     '/',
     asyncHandler(async (req: Request, res) => {
       let data = cfg.createSchema.parse(req.body) as Record<string, unknown>;
       if (cfg.validate) await cfg.validate(data);
-      if (cfg.prepareData) data = await cfg.prepareData(data, req);
-      const created = await cfg.model.create({
-        data: { ...data, createdBy: req.user!.id, updatedBy: req.user!.id },
-        include: cfg.include,
+      const created = await prisma.$transaction(async (tx) => {
+        if (cfg.prepareData) data = await cfg.prepareData(data, req, { mode: 'create', tx });
+        const model = (tx as Record<string, typeof cfg.model>)[cfg.entity];
+        const row = await model.create({
+          data: { ...data, createdBy: req.user!.id, updatedBy: req.user!.id },
+          include: cfg.include,
+        });
+        await writeAudit(req, { action: 'create', entity: cfg.entity, entityId: row.id, after: row }, tx);
+        if (cfg.afterCreate) await cfg.afterCreate(row, req, tx);
+        return row;
       });
-      await writeAudit(req, { action: 'create', entity: cfg.entity, entityId: created.id, after: created });
-      if (cfg.afterCreate) await cfg.afterCreate(created, req);
       res.status(201).json(await present(cfg, created));
     }),
   );
@@ -111,18 +127,16 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
       const schema = cfg.updateSchema ?? cfg.createSchema;
       let data = schema.parse(req.body) as Record<string, unknown>;
       if (cfg.validate) await cfg.validate(data);
-      if (cfg.prepareData) data = await cfg.prepareData(data, req);
-      const updated = await cfg.model.update({
-        where: { id },
-        data: { ...data, updatedBy: req.user!.id },
-        include: cfg.include,
-      });
-      await writeAudit(req, {
-        action: 'update',
-        entity: cfg.entity,
-        entityId: id,
-        before: existing,
-        after: updated,
+      const updated = await prisma.$transaction(async (tx) => {
+        if (cfg.prepareData) data = await cfg.prepareData(data, req, { mode: 'update', tx });
+        const model = (tx as Record<string, typeof cfg.model>)[cfg.entity];
+        const row = await model.update({
+          where: { id },
+          data: { ...data, updatedBy: req.user!.id },
+          include: cfg.include,
+        });
+        await writeAudit(req, { action: 'update', entity: cfg.entity, entityId: id, before: existing, after: row }, tx);
+        return row;
       });
       res.json(await present(cfg, updated));
     }),
@@ -136,16 +150,16 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
       const id = Number(req.params.id);
       const existing = await cfg.model.findFirst({ where: { id, deletedAt: null } });
       if (!existing) throw notFound();
-      const updated = await cfg.model.update({
-        where: { id },
-        data: { deletedAt: new Date(), deletedBy: req.user!.id },
-      });
-      await writeAudit(req, {
-        action: 'delete',
-        entity: cfg.entity,
-        entityId: id,
-        before: existing,
-        after: updated,
+      await prisma.$transaction(async (tx) => {
+        const model = (tx as Record<string, typeof cfg.model>)[cfg.entity];
+        const updated = await model.update({
+          where: { id },
+          data: { deletedAt: new Date(), deletedBy: req.user!.id },
+        });
+        await writeAudit(req, { action: 'delete', entity: cfg.entity, entityId: id, before: existing, after: updated }, tx);
+        // Каскад: удаление пациента/операции мягко удаляет связанные деньги,
+        // иначе их платежи продолжали бы учитываться в выручке (осиротевшие).
+        await cascadeSoftDelete(cfg.entity, id, req, tx);
       });
       res.json({ ok: true });
     }),
@@ -159,17 +173,16 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
       const id = Number(req.params.id);
       const existing = await cfg.model.findFirst({ where: { id, NOT: { deletedAt: null } } });
       if (!existing) throw notFound('Удалённая запись не найдена');
-      const updated = await cfg.model.update({
-        where: { id },
-        data: { deletedAt: null, deletedBy: null, updatedBy: req.user!.id },
-        include: cfg.include,
-      });
-      await writeAudit(req, {
-        action: 'restore',
-        entity: cfg.entity,
-        entityId: id,
-        before: existing,
-        after: updated,
+      const updated = await prisma.$transaction(async (tx) => {
+        const model = (tx as Record<string, typeof cfg.model>)[cfg.entity];
+        const row = await model.update({
+          where: { id },
+          data: { deletedAt: null, deletedBy: null, updatedBy: req.user!.id },
+          include: cfg.include,
+        });
+        await writeAudit(req, { action: 'restore', entity: cfg.entity, entityId: id, before: existing, after: row }, tx);
+        await cascadeRestore(cfg.entity, id, req, tx);
+        return row;
       });
       res.json(await present(cfg, updated));
     }),
