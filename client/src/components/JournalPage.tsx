@@ -24,9 +24,11 @@ interface Props<T extends JournalRecord> {
   renderFilters?: (params: Record<string, unknown>, setParam: (k: string, v: unknown) => void) => ReactNode;
   onRowClick?: (row: T) => void;
   newButtonLabel?: string;
+  // Дополнительные кнопки в колонке действий (например, «Итог» у консультаций)
+  rowActions?: (row: T) => ReactNode;
 }
 
-function canEditRow(row: JournalRecord, user: { id: number; role: string } | null): boolean {
+export function canEditRow(row: JournalRecord, user: { id: number; role: string } | null): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;
   if (row.createdBy !== user.id) return false;
@@ -44,6 +46,7 @@ export function JournalPage<T extends JournalRecord>({
   renderFilters,
   onRowClick,
   newButtonLabel = 'Добавить',
+  rowActions,
 }: Props<T>) {
   const { user, isAdmin } = useAuth();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, search: '' });
@@ -70,6 +73,7 @@ export function JournalPage<T extends JournalRecord>({
     align: 'right',
     cell: (row) => (
       <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        {rowActions?.(row)}
         {canEditRow(row, user) && (
           <button className="btn-ghost px-2 py-1 text-xs" onClick={() => openEdit(row)}>
             Изменить

@@ -6,6 +6,9 @@ import { resolvePatient } from '../services/patient-resolve.service.js';
 import { patientInputSchema, requiredString, requiredDate, optionalDate } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
 import { writeAudit } from '../services/audit.service.js';
+import { asyncHandler, forbidden, notFound } from '../lib/http.js';
+import { canEditRecord } from '../middleware/rbac.js';
+import { serialize } from '../lib/serialize.js';
 
 const TERMINAL_METHOD = 'Через терминал';
 
@@ -91,5 +94,52 @@ const router = makeCrudRouter({
     }
   },
 });
+
+// Дата консультации ещё не прошла: день консультации (включительно) или позже.
+// dateKons хранится как полночь UTC календарной даты (из <input type="date">).
+function konsNotPassed(dateKons: Date | null): boolean {
+  if (!dateKons) return false;
+  const d = new Date(dateKons);
+  const konsDay = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return konsDay >= today;
+}
+
+const resultSchema = z.object({
+  stage: z.string().optional().nullable(),
+  resultDetails: z.string().optional().nullable(),
+});
+
+// Итог консультации отдельным действием: оплата часто вносится заранее, а сама
+// консультация проходит позже — общее правило «своя запись в день создания» не
+// позволяет оператору внести итог. Разрешаем оператору менять ТОЛЬКО итог своей
+// консультации, пока её дата не прошла. Админ — без ограничений.
+router.patch(
+  '/:id/result',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await prisma.consultation.findFirst({
+      where: { id, deletedAt: null },
+      include: { patient: true },
+    });
+    if (!existing) throw notFound();
+    const allowed =
+      canEditRecord(req.user!, existing) ||
+      (existing.createdBy === req.user!.id && konsNotPassed(existing.dateKons));
+    if (!allowed) {
+      throw forbidden('Итог можно изменить только по своей консультации, пока её дата не прошла');
+    }
+    const data = resultSchema.parse(req.body);
+    await assertDictionaryValue('consultation_stage', data.stage ?? null);
+    const updated = await prisma.consultation.update({
+      where: { id },
+      data: { stage: data.stage ?? null, resultDetails: data.resultDetails ?? null, updatedBy: req.user!.id },
+      include: { patient: true },
+    });
+    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before: existing, after: updated });
+    res.json(serialize(updated));
+  }),
+);
 
 export default router;
