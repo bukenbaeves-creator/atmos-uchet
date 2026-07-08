@@ -14,7 +14,7 @@ const schema = z.object({
   manager: requiredString('Необходимо указать менеджера'),
   dateOp: requiredDate('Необходимо указать дату операции'),
   opType: requiredString('Необходимо указать тип операции'),
-  surgeon: requiredString('Необходимо указать хирурга'),
+  surgeon: requiredString('Необходимо указать врача'),
   anesthesiologist: z.string().optional().nullable(),
   cost: z.coerce.number({ invalid_type_error: 'Стоимость должна быть числом' }).nonnegative('Стоимость не может быть отрицательной'),
   anesthesiaCost: z.coerce.number({ invalid_type_error: 'Стоимость наркоза должна быть числом' }).nonnegative().default(0),
@@ -44,7 +44,8 @@ const router = makeCrudRouter({
   search: (t) => ({ OR: [...patientSearchOR(t, true), { opType: { contains: t, mode: 'insensitive' } }] }),
   validate: async (d) => {
     await assertDictionaryValue('op_type', d.opType as string);
-    await assertDictionaryValue('surgeon', d.surgeon as string | null);
+    // Терминология единая: врач операции выбирается из общего справочника doctor
+    await assertDictionaryValue('doctor', d.surgeon as string | null);
     await assertDictionaryValue('zapis', d.zapis as string | null);
     await assertDictionaryValue('manager', d.manager as string | null);
   },

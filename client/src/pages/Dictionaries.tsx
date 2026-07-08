@@ -6,7 +6,6 @@ import { PageHeader, Spinner } from '../components/ui';
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'city', label: 'Города' },
   { key: 'doctor', label: 'Врачи' },
-  { key: 'surgeon', label: 'Хирурги' },
   { key: 'op_type', label: 'Типы операций' },
   { key: 'pay_method', label: 'Способы оплаты' },
   { key: 'terminal', label: 'Терминалы' },

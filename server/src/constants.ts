@@ -28,7 +28,7 @@ export const ZAPIS = ['ВРАЧ', 'КЛИНИКА', 'КЛИНИКА+ВРАЧ'];
 export const VID = ['Офлайн', 'Онлайн'];
 
 export const DOCTORS = [
-  'Курлебаев',
+  'Кулесбаев',
   'Бекремитов',
   'Сулейманова',
   'Мартынов',
@@ -95,7 +95,6 @@ export const CITIES = [
 export const DICTIONARY_SEED: Record<string, string[]> = {
   city: CITIES,
   doctor: DOCTORS,
-  surgeon: DOCTORS,
   op_type: OP_TYPES,
   pay_method: PAY_METHODS,
   terminal: TERMINALS,

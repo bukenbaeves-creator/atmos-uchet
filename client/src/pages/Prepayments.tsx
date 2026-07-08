@@ -42,7 +42,7 @@ export function Prepayments() {
     { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patient?.fio ?? '—'}</span> },
     { header: 'Дата', cell: (r) => formatDate(r.dateOp) },
     { header: 'Операция', cell: (r) => r.opType ?? '—' },
-    { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
+    { header: 'Врач', cell: (r) => r.surgeon ?? '—' },
     { header: 'К оплате', align: 'right', cell: (r) => formatMoney(r.totalDue) },
     { header: 'Аванс', align: 'right', cell: (r) => <span className="text-brand-600">{formatMoney(r.prepaid)}</span> },
     { header: 'Оплачено', align: 'right', cell: (r) => formatMoney(r.paid) },

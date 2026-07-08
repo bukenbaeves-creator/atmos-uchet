@@ -26,7 +26,8 @@ const fields: Field[] = [
   { name: 'manager', label: 'Менеджер (кто записал)', type: 'select', dict: 'manager', required: true },
   { name: 'dateOp', label: 'Дата операции', type: 'date', required: true },
   { name: 'opType', label: 'Тип операции', type: 'select', dict: 'op_type', required: true },
-  { name: 'surgeon', label: 'Хирург', type: 'select', dict: 'surgeon', required: true },
+  // Поле в БД называется surgeon, но терминология единая — «Врач» (общий справочник doctor)
+  { name: 'surgeon', label: 'Врач', type: 'select', dict: 'doctor', required: true },
   { name: 'anesthesiologist', label: 'Анестезиолог', type: 'text' },
   { name: 'cost', label: 'Стоимость операции', type: 'money', required: true },
   { name: 'anesthesiaCost', label: 'Стоимость наркоза', type: 'money' },
@@ -41,7 +42,7 @@ export function Operations() {
     { header: 'Дата', cell: (o) => formatDate(o.dateOp) },
     { header: 'Тип', cell: (o) => o.opType ?? '—' },
     { header: 'Менеджер', cell: (o) => o.manager ?? '—' },
-    { header: 'Хирург', cell: (o) => o.surgeon ?? '—' },
+    { header: 'Врач', cell: (o) => o.surgeon ?? '—' },
     { header: 'К оплате', align: 'right', cell: (o) => formatMoney(o.totalDue) },
     { header: 'Оплачено', align: 'right', cell: (o) => formatMoney(o.paid) },
     {

@@ -76,7 +76,7 @@ async function buildData(journal: string): Promise<{ columns: Column[]; rows: Ro
           { header: 'Пациент', key: 'patient', width: 28 },
           { header: 'Дата', key: 'dateOp', width: 14 },
           { header: 'Тип операции', key: 'opType', width: 24 },
-          { header: 'Хирург', key: 'surgeon', width: 16 },
+          { header: 'Врач', key: 'surgeon', width: 16 },
           { header: 'Стоимость', key: 'cost', width: 14 },
           { header: 'Наркоз', key: 'anesthesiaCost', width: 14 },
           { header: 'К оплате', key: 'totalDue', width: 14 },

@@ -2,10 +2,10 @@ import { prisma } from '../lib/prisma.js';
 import { badRequest } from '../lib/http.js';
 
 // Категории справочников
+// Категория surgeon упразднена: врач операции берётся из общего справочника doctor
 export const DICTIONARY_CATEGORIES = [
   'city',
   'doctor',
-  'surgeon',
   'op_type',
   'pay_method',
   'terminal',

@@ -73,6 +73,38 @@ async function main() {
     });
   }
 
+  // 1b) Объединение справочников: категория «surgeon» упразднена, врач операции
+  // берётся из общего справочника «doctor». Значения, добавленные админом в
+  // «Хирурги» и отсутствующие во «Врачах», переносим, затем категорию удаляем.
+  const surgeons = await prisma.dictionaryItem.findMany({ where: { category: 'surgeon' } });
+  for (const s of surgeons) {
+    await prisma.dictionaryItem.upsert({
+      where: { category_label: { category: 'doctor', label: s.label } },
+      update: {}, // уже есть во «Врачах» — ничего не меняем
+      create: { category: 'doctor', label: s.label, sortOrder: s.sortOrder, active: s.active },
+    });
+  }
+  if (surgeons.length) {
+    await prisma.dictionaryItem.deleteMany({ where: { category: 'surgeon' } });
+    console.log(`  «Хирурги» объединены с «Врачами» (${surgeons.length} значений перенесено)`);
+  }
+
+  // 1b-2) Переименование врача: Курлебаев -> Кулесбаев (справочник + все записи).
+  //     Выполняется ПОСЛЕ объединения хирургов, чтобы охватить и перенесённые значения.
+  const DOCTOR_RENAME: Record<string, string> = { Курлебаев: 'Кулесбаев' };
+  for (const [oldV, newV] of Object.entries(DOCTOR_RENAME)) {
+    // Новое значение уже создано шагом 1 из DICTIONARY_SEED — старое просто удаляем
+    const removed = await prisma.dictionaryItem.deleteMany({ where: { category: 'doctor', label: oldV } });
+    const c1 = await prisma.consultation.updateMany({ where: { doctor: oldV }, data: { doctor: newV } });
+    const c2 = await prisma.operation.updateMany({ where: { surgeon: oldV }, data: { surgeon: newV } });
+    const c3 = await prisma.payment.updateMany({ where: { doctor: oldV }, data: { doctor: newV } });
+    if (removed.count + c1.count + c2.count + c3.count > 0) {
+      console.log(
+        `  Врач «${oldV}» переименован в «${newV}»: консультаций ${c1.count}, операций ${c2.count}, платежей ${c3.count}`,
+      );
+    }
+  }
+
   const PAY_METHOD_MAP: Record<string, string> = {
     'Каспи QR': 'Через терминал',
     'Халык карта': 'Через терминал',
@@ -96,7 +128,7 @@ async function main() {
     await prisma.payment.updateMany({ where: { terminal: oldV }, data: { terminal: newV } });
   }
 
-  // 1b) Настройки по умолчанию. Ставки KPI — всегда. Коды регистрации: в production
+  // 1c) Настройки по умолчанию. Ставки KPI — всегда. Коды регистрации: в production
   //     НЕ ставим публичные дефолты (иначе любой зарегистрируется по коду из репозитория) —
   //     берём из env или оставляем пустыми (регистрация закрыта, пока админ не задаст коды).
   const isProd = process.env.NODE_ENV === 'production';
@@ -111,7 +143,7 @@ async function main() {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
   }
 
-  // 1c) Бэкфилл менеджеров для существующих демо-записей (где не заполнено)
+  // 1d) Бэкфилл менеджеров для существующих демо-записей (где не заполнено)
   const consNoMgr = await prisma.consultation.findMany({ where: { manager: null }, select: { id: true } });
   for (const c of consNoMgr) {
     await prisma.consultation.update({ where: { id: c.id }, data: { manager: pick(MANAGERS) } });

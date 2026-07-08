@@ -92,7 +92,7 @@ const router = makeCrudRouter({
     let operationId = (rest.operationId as number | null) ?? null;
 
     // Услуга про операцию, но операция не выбрана -> создаём её на лету, полностью
-    // заполненную (дата, тип, стоимость, хирург, запись, менеджер) — чтобы корректно
+    // заполненную (дата, тип, стоимость, врач, запись, менеджер) — чтобы корректно
     // учитывалась в отчётах и в KPI менеджеров.
     if (OPERATION_SERVICES.includes(rest.serviceType as string) && !operationId) {
       const op = await prisma.operation.create({
