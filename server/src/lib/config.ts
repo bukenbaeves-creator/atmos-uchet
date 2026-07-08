@@ -10,7 +10,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   // Срок жизни сессии (автовыход по неактивности реализуется коротким TTL токена,
   // обновляемого при активности на клиенте через /auth/me).
-  jwtTtl: '12h',
+  jwtTtl: '12h' as const,
   // Порог аномально большой суммы (тенге) — раздел 10 ТЗ.
   anomalyAmount: 30_000_000,
 };

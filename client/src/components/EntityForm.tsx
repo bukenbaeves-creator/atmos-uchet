@@ -35,7 +35,8 @@ export interface Field {
 
 interface Props {
   fields: Field[];
-  initial?: Record<string, unknown>;
+  // Любая строка журнала: значения читаются по имени поля
+  initial?: object;
   submitLabel?: string;
   onSubmit: (data: Record<string, unknown>) => Promise<unknown>;
   onDone: () => void;
@@ -62,8 +63,9 @@ function initialValue(field: Field, initial?: Record<string, unknown>) {
 export function EntityForm({ fields, initial, submitLabel = 'Сохранить', onSubmit, onDone }: Props) {
   const { data: dict } = useDictionaries();
   const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const init = initial as Record<string, unknown> | undefined;
     const v: Record<string, unknown> = {};
-    for (const f of fields) v[f.name] = initialValue(f, initial);
+    for (const f of fields) v[f.name] = initialValue(f, init);
     return v;
   });
   const [error, setError] = useState<string | null>(null);
