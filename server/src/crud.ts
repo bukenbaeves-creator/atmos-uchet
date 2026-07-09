@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { asyncHandler, forbidden, notFound } from './lib/http.js';
 import { requireAuth } from './middleware/auth.js';
-import { requireAdmin, canEditRecord } from './middleware/rbac.js';
+import { requireAdmin, requireRole, canEditRecord } from './middleware/rbac.js';
 import { writeAudit } from './services/audit.service.js';
 import { prisma, type PrismaClientOrTx } from './lib/prisma.js';
 import { cascadeSoftDelete, cascadeRestore } from './services/cascade.service.js';
@@ -15,6 +15,9 @@ type AnyModel = any;
 export interface CrudConfig {
   entity: string; // тип сущности для аудита: patient | consultation | operation | payment
   model: AnyModel; // делегат Prisma (prisma.patient и т.д.)
+  // Ограничение доступа по ролям (например, ['operator','admin'] — скрыть от медсестры).
+  // По умолчанию — любой авторизованный.
+  roles?: string[];
   createSchema: z.ZodTypeAny;
   updateSchema?: z.ZodTypeAny;
   include?: Record<string, unknown>;
@@ -49,6 +52,7 @@ async function present(cfg: CrudConfig, row: Record<string, unknown>) {
 export function makeCrudRouter(cfg: CrudConfig): Router {
   const router = Router();
   router.use(requireAuth);
+  if (cfg.roles) router.use(requireRole(...cfg.roles));
 
   // Список с поиском, фильтрами и пагинацией
   router.get(

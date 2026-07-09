@@ -19,6 +19,7 @@ export async function cascadeSoftDelete(
     await softDeleteChildren(tx.consultation, { patientId: id }, stamp, req, 'consultation', tx);
     await softDeleteChildren(tx.payment, { patientId: id }, stamp, req, 'payment', tx);
     await softDeleteChildren(tx.operation, { patientId: id }, stamp, req, 'operation', tx);
+    await softDeleteChildren(tx.expenseWriteoff, { patientId: id }, stamp, req, 'writeoff', tx);
   } else if (entity === 'operation') {
     await softDeleteChildren(tx.payment, { operationId: id }, stamp, req, 'payment', tx);
   }
@@ -31,6 +32,7 @@ export async function cascadeRestore(entity: string, id: number, req: Request, t
     await restoreChildren(tx.consultation, { patientId: id }, req, 'consultation', tx);
     await restoreChildren(tx.payment, { patientId: id }, req, 'payment', tx);
     await restoreChildren(tx.operation, { patientId: id }, req, 'operation', tx);
+    await restoreChildren(tx.expenseWriteoff, { patientId: id }, req, 'writeoff', tx);
   } else if (entity === 'operation') {
     await restoreChildren(tx.payment, { operationId: id }, req, 'payment', tx);
   }

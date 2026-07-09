@@ -32,6 +32,9 @@ const RELATED_KEYS: Record<string, string[]> = {
   consultations: ['consultations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries'],
   operations: ['operations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors'],
   patients: ['patients', 'consultations', 'operations', 'payments', 'prepayments', 'dashboard', 'patient-card', 'errors'],
+  // Модуль расходов: списание меняет остаток склада; приход меняет склад и номенклатуру
+  writeoffs: ['writeoffs', 'stock', 'nomenclature', 'patients'],
+  receipts: ['receipts', 'stock', 'nomenclature'],
 };
 
 // Универсальные мутации CRUD

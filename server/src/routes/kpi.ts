@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/rbac.js';
+import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import { getRates, setRates, kpiReport, type Period } from '../services/kpi.service.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole('operator', 'admin')); // денежный отчёт — скрыт от медсестры
 
 // Текущие ставки KPI
 router.get(

@@ -1,12 +1,21 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { apiGet, apiPost } from '../api/client';
 
+export type Role = 'admin' | 'operator' | 'nurse';
+
 export interface User {
   id: number;
   login: string;
   fio: string;
-  role: 'admin' | 'operator';
+  role: Role;
 }
+
+// Человекочитаемая метка роли
+export const ROLE_LABEL: Record<Role, string> = {
+  admin: 'Администратор',
+  operator: 'Оператор',
+  nurse: 'Медсестра',
+};
 
 interface RegisterInput {
   login: string;

@@ -3,11 +3,12 @@ import ExcelJS from 'exceljs';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler, badRequest } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { computeOperation } from '../services/compute.js';
 import { writeAudit } from '../services/audit.service.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole('operator', 'admin')); // выгрузки продаж — скрыты от медсестры
 
 const num = (v: unknown) => (v == null ? 0 : Number(v));
 const d = (v: Date | null | undefined) => (v ? new Date(v).toLocaleDateString('ru-RU') : '');

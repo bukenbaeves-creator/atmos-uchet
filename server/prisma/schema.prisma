@@ -16,6 +16,25 @@ datasource db {
 enum Role {
   admin
   operator
+  nurse
+}
+
+// Тип позиции номенклатуры
+enum NomenclatureType {
+  drug // препарат (учёт партий и срока годности)
+  consumable // расходник
+}
+
+// Статус позиции номенклатуры: draft — ждёт подтверждения администратором
+enum NomenclatureStatus {
+  draft
+  active
+}
+
+// Источник документа прихода
+enum ReceiptSource {
+  manual
+  import
 }
 
 model User {
@@ -54,6 +73,9 @@ model Patient {
   consultations Consultation[]
   operations    Operation[]
   payments      Payment[]
+  writeoffs     ExpenseWriteoff[]
+
+  mergedIntoId Int? // если карточка слита с другой — id основной карточки
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -115,7 +137,8 @@ model Operation {
   contractSigned   Boolean       @default(false)
   note             String?
 
-  payments Payment[]
+  payments  Payment[]
+  writeoffs ExpenseWriteoff[]
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -176,4 +199,143 @@ model AuditLog {
 model Setting {
   key   String @id
   value String
+}
+
+// ===== Модуль учёта материальных расходов =====
+
+// Позиция номенклатуры (препарат/расходник). Наполняется из приходов; новые
+// позиции попадают в draft и подтверждаются администратором (модерация).
+model Nomenclature {
+  id              Int                @id @default(autoincrement())
+  nameDisplay     String
+  nameNormalized  String             @unique // нормализованное имя для сопоставления
+  type            NomenclatureType   @default(consumable)
+  unitMeasure     String? // ед. измерения (мл, мг, шт)
+  unitWriteoff    String? // ед. списания
+  packFactor      Decimal            @default(1) @db.Decimal(14, 4) // упаковка -> ед. списания
+  minStock        Decimal            @default(0) @db.Decimal(14, 3) // точка дозаказа
+  isSpecial       Boolean            @default(false) // контролируемый препарат
+  isExpiryTracked Boolean            @default(false) // учёт срока годности (FEFO)
+  status          NomenclatureStatus @default(draft)
+  confirmedBy     Int?
+  confirmedAt     DateTime?
+  mergedIntoId    Int? // если позиция слита с другой — id основной позиции
+
+  aliases   NomenclatureAlias[]
+  batches   Batch[]
+  writeoffs ExpenseWriteoff[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([status])
+}
+
+// Варианты написания наименования (синонимы), накапливаются из приходов.
+model NomenclatureAlias {
+  id              Int          @id @default(autoincrement())
+  nomenclature    Nomenclature @relation(fields: [nomenclatureId], references: [id])
+  nomenclatureId  Int
+  aliasRaw        String // исходное написание из прихода
+  aliasNormalized String       @unique // нормализованный вариант (ключ поиска)
+  createdAt       DateTime     @default(now())
+
+  @@index([nomenclatureId])
+}
+
+// Категория расхода (операция/реабилитация). Расширяемый справочник.
+model ExpenseCategory {
+  id        Int               @id @default(autoincrement())
+  name      String            @unique
+  isActive  Boolean           @default(true)
+  sortOrder Int               @default(0)
+  writeoffs ExpenseWriteoff[]
+}
+
+// Документ прихода на склад.
+model Receipt {
+  id       Int           @id @default(autoincrement())
+  date     DateTime
+  source   ReceiptSource @default(manual)
+  supplier String? // наименование поставщика
+  note     String?
+  batches  Batch[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+}
+
+// Партия прихода: цена закупа, серия, срок годности, текущий остаток.
+model Batch {
+  id             Int          @id @default(autoincrement())
+  receipt        Receipt      @relation(fields: [receiptId], references: [id])
+  receiptId      Int
+  nomenclature   Nomenclature @relation(fields: [nomenclatureId], references: [id])
+  nomenclatureId Int
+  qtyIn          Decimal      @db.Decimal(14, 3)
+  qtyRemaining   Decimal      @db.Decimal(14, 3)
+  purchasePrice  Decimal      @db.Decimal(14, 2) // цена закупа за единицу (только админ)
+  series         String?
+  expiryDate     DateTime?
+  receivedAt     DateTime
+
+  allocations WriteoffBatchAllocation[]
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([nomenclatureId, expiryDate, receivedAt])
+}
+
+// Списание материала на пациента/операцию. costTotal фиксируется в момент списания.
+model ExpenseWriteoff {
+  id             Int             @id @default(autoincrement())
+  patient        Patient         @relation(fields: [patientId], references: [id])
+  patientId      Int
+  operation      Operation?      @relation(fields: [operationId], references: [id])
+  operationId    Int?
+  nomenclature   Nomenclature    @relation(fields: [nomenclatureId], references: [id])
+  nomenclatureId Int
+  category       ExpenseCategory @relation(fields: [categoryId], references: [id])
+  categoryId     Int
+  qty            Decimal         @db.Decimal(14, 3) // в единице списания
+  costTotal      Decimal         @default(0) @db.Decimal(14, 2) // зафиксированная себестоимость (только админ)
+  isShortage     Boolean         @default(false) // списано при нехватке остатка
+  date           DateTime
+
+  allocations WriteoffBatchAllocation[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([patientId])
+  @@index([operationId])
+  @@index([nomenclatureId])
+  @@index([date])
+}
+
+// Распределение одного списания по партиям (ядро FIFO/FEFO).
+model WriteoffBatchAllocation {
+  id         Int             @id @default(autoincrement())
+  writeoff   ExpenseWriteoff @relation(fields: [writeoffId], references: [id])
+  writeoffId Int
+  batch      Batch           @relation(fields: [batchId], references: [id])
+  batchId    Int
+  qty        Decimal         @db.Decimal(14, 3)
+  cost       Decimal         @db.Decimal(14, 2) // qty × purchasePrice (только админ)
+
+  @@index([writeoffId])
+  @@index([batchId])
 }

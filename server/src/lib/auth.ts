@@ -5,7 +5,7 @@ import { config } from './config.js';
 export interface TokenPayload {
   id: number;
   login: string;
-  role: 'admin' | 'operator';
+  role: 'admin' | 'operator' | 'nurse';
   fio: string;
 }
 

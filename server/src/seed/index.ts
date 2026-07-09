@@ -180,6 +180,29 @@ async function main() {
     });
   }
 
+  // 2a) Категории расхода материалов (операция/реабилитация) — идемпотентно, в т.ч. в проде.
+  for (const [i, name] of ['Операция', 'Реабилитация'].entries()) {
+    await prisma.expenseCategory.upsert({
+      where: { name },
+      update: {},
+      create: { name, sortOrder: i },
+    });
+  }
+
+  // Демо-медсестра — только в dev.
+  if (!isProd) {
+    await prisma.user.upsert({
+      where: { login: 'nurse' },
+      update: {},
+      create: {
+        login: 'nurse',
+        fio: 'Медсестра (демо)',
+        role: 'nurse',
+        passwordHash: await hashPassword('nurse123'),
+      },
+    });
+  }
+
   // 3) Демо-данные. В production не генерируем — только справочники и админ.
   if (isProd) {
     console.log('▶ Сид: production — демо-данные не генерируются (только справочники, настройки, админ).');

@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { dashboard, prepayments, errorCheck, type Period } from '../services/report.service.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole('operator', 'admin')); // денежные отчёты — скрыты от медсестры
 
 // Границы периода в UTC (согласованно с хранением дат как UTC-полночь):
 // from = 00:00 UTC начального дня; to = 00:00 UTC дня ПОСЛЕ конечного (полуоткрытый

@@ -16,11 +16,13 @@ export function Admin() {
 }
 
 // ---------- Пользователи ----------
+type Role = 'admin' | 'operator' | 'nurse';
+
 interface User {
   id: number;
   login: string;
   fio: string;
-  role: 'admin' | 'operator';
+  role: Role;
   active: boolean;
   createdAt: string;
 }
@@ -162,7 +164,7 @@ function UsersTab() {
 function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: () => void; onSaved: () => void }) {
   const [login, setLogin] = useState(editing?.login ?? '');
   const [fio, setFio] = useState(editing?.fio ?? '');
-  const [role, setRole] = useState<'admin' | 'operator'>(editing?.role ?? 'operator');
+  const [role, setRole] = useState<Role>(editing?.role ?? 'operator');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -200,8 +202,9 @@ function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: 
       </div>
       <div>
         <label className="label">Роль</label>
-        <select className="input" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'operator')}>
+        <select className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
           <option value="operator">Оператор</option>
+          <option value="nurse">Медсестра</option>
           <option value="admin">Администратор</option>
         </select>
       </div>

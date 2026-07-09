@@ -19,6 +19,12 @@ import reportsRouter from './routes/reports.js';
 import exportRouter from './routes/export.js';
 import reconcileRouter from './routes/reconcile.js';
 import kpiRouter from './routes/kpi.js';
+import nomenclatureRouter from './routes/nomenclature.js';
+import expenseCategoriesRouter from './routes/expense-categories.js';
+import receiptsRouter from './routes/receipts.js';
+import writeoffsRouter from './routes/writeoffs.js';
+import stockRouter from './routes/stock.js';
+import expenseExportRouter from './routes/expense-export.js';
 
 const app = express();
 
@@ -56,6 +62,13 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/reconcile', reconcileRouter);
 app.use('/api/kpi', kpiRouter);
+// Модуль учёта материальных расходов
+app.use('/api/nomenclature', nomenclatureRouter);
+app.use('/api/expense-categories', expenseCategoriesRouter);
+app.use('/api/receipts', receiptsRouter);
+app.use('/api/writeoffs', writeoffsRouter);
+app.use('/api/stock', stockRouter);
+app.use('/api/expense-export', expenseExportRouter);
 
 // Production: раздаём собранный фронтенд (single-origin) + SPA-fallback.
 // В dev папки public нет — блок пропускается, клиент обслуживает Vite.

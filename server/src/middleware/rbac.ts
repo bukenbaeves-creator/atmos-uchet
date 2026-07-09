@@ -8,6 +8,15 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
+// Требует одну из перечисленных ролей (например, requireRole('nurse', 'admin')).
+export function requireRole(...roles: string[]) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user) return next(unauthorized());
+    if (!roles.includes(req.user.role)) return next(forbidden('Недостаточно прав для этого раздела'));
+    next();
+  };
+}
+
 // Правило редактирования для оператора: он может менять только СВОЮ запись,
 // созданную СЕГОДНЯ. Админ — любую. Используется в CRUD-фабрике.
 export function canEditRecord(

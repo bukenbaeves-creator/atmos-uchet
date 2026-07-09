@@ -16,3 +16,7 @@ export const formatDateTime = (v: string | Date | null | undefined): string =>
 // Для <input type="date">
 export const toInputDate = (v: string | Date | null | undefined): string =>
   v ? dayjs(v).format('YYYY-MM-DD') : '';
+
+// Срок годности истёк (дата в прошлом). Пусто/бессрочный → false.
+export const isExpired = (v: string | Date | null | undefined): boolean =>
+  v ? dayjs(v).isBefore(dayjs(), 'day') : false;

@@ -42,6 +42,8 @@ export const apiPatch = <T>(path: string, data?: unknown) =>
 export const apiDelete = <T>(path: string) => request<T>(path, { method: 'DELETE' });
 
 export const exportUrl = (journal: string) => `${BASE}/api/export/${journal}.xlsx`;
+// Выгрузки модуля расходов (stock | purchase-list | expiry | writeoffs)
+export const expenseExportUrl = (report: string) => `${BASE}/api/expense-export/${report}.xlsx`;
 
 // Загрузка файла (multipart) — Content-Type ставит браузер сам
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {

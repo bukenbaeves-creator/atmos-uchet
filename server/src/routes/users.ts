@@ -23,7 +23,7 @@ router.get(
 const createSchema = z.object({
   login: z.string().min(3, 'Логин минимум 3 символа'),
   fio: z.string().min(1, 'ФИО обязательно'),
-  role: z.enum(['admin', 'operator']),
+  role: z.enum(['admin', 'operator', 'nurse']),
   password: z.string().min(6, 'Пароль минимум 6 символов'),
   active: z.coerce.boolean().default(true),
 });
@@ -44,7 +44,7 @@ router.post(
 
 const updateSchema = z.object({
   fio: z.string().min(1).optional(),
-  role: z.enum(['admin', 'operator']).optional(),
+  role: z.enum(['admin', 'operator', 'nurse']).optional(),
   active: z.coerce.boolean().optional(),
   password: z.string().min(6).optional(),
 });

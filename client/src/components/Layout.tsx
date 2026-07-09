@@ -1,23 +1,43 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { useAuth } from '../lib/auth';
+import { useAuth, ROLE_LABEL, type Role } from '../lib/auth';
 
 interface NavItem {
   to: string;
   label: string;
   icon: string;
   end?: boolean;
+  roles?: Role[]; // если задано — пункт виден только этим ролям
 }
 
+interface Section {
+  title?: string;
+  items: NavItem[];
+  roles?: Role[]; // если задано — раздел виден только этим ролям
+}
+
+// Денежные/продажные разделы: скрыты от медсестры (и на сервере они ей запрещены).
+const SALES: Role[] = ['operator', 'admin'];
+
 // Разделы меню. Касса — вверху (второй пункт), Дашборд — в конце отчётов.
-const SECTIONS: { title?: string; items: NavItem[] }[] = [
+const SECTIONS: Section[] = [
   {
     items: [
       { to: '/patients', label: 'Пациенты', icon: '🧑' },
-      { to: '/cashbox', label: 'Касса', icon: '🧾' },
+      { to: '/cashbox', label: 'Касса', icon: '🧾', roles: SALES },
+    ],
+  },
+  {
+    title: 'Склад и расходы',
+    items: [
+      { to: '/writeoffs', label: 'Расход материалов', icon: '💊' },
+      { to: '/stock', label: 'Склад · остатки', icon: '📦' },
+      { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️' },
+      { to: '/receipts', label: 'Приход', icon: '📥', roles: ['admin'] },
     ],
   },
   {
     title: 'Журналы',
+    roles: SALES,
     items: [
       { to: '/consultations', label: 'Консультации', icon: '🗒️' },
       { to: '/operations', label: 'Операции', icon: '🩺' },
@@ -25,6 +45,7 @@ const SECTIONS: { title?: string; items: NavItem[] }[] = [
   },
   {
     title: 'Отчёты',
+    roles: SALES,
     items: [
       { to: '/prepayments', label: 'Предоплаты и остатки', icon: '💰' },
       { to: '/kpi', label: 'KPI менеджеров', icon: '🎯' },
@@ -39,8 +60,9 @@ const SECTIONS: { title?: string; items: NavItem[] }[] = [
   },
 ];
 
-const ADMIN_SECTION: { title: string; items: NavItem[] } = {
+const ADMIN_SECTION: Section = {
   title: 'Администрирование',
+  roles: ['admin'],
   items: [
     { to: '/audit', label: 'Аудит', icon: '🕵️' },
     { to: '/admin', label: 'Пользователи', icon: '⚙️' },
@@ -48,14 +70,21 @@ const ADMIN_SECTION: { title: string; items: NavItem[] } = {
 };
 
 export function Layout() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout } = useAuth();
+  const role = (user?.role ?? 'operator') as Role;
+  const roleLabel = ROLE_LABEL[role] ?? 'Пользователь';
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
       isActive ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
     }`;
 
-  const sections = isAdmin ? [...SECTIONS, ADMIN_SECTION] : SECTIONS;
+  // Фильтр разделов/пунктов по роли текущего пользователя
+  const visible = (roles?: Role[]) => !roles || roles.includes(role);
+  const sections = [...SECTIONS, ADMIN_SECTION]
+    .filter((s) => visible(s.roles))
+    .map((s) => ({ ...s, items: s.items.filter((n) => visible(n.roles)) }))
+    .filter((s) => s.items.length > 0);
 
   return (
     <div className="flex h-full">
@@ -82,7 +111,7 @@ export function Layout() {
         </nav>
         <div className="border-t border-slate-100 p-3">
           <div className="px-2 text-sm font-medium text-slate-700">{user?.fio}</div>
-          <div className="px-2 text-xs text-slate-400">{isAdmin ? 'Администратор' : 'Оператор'}</div>
+          <div className="px-2 text-xs text-slate-400">{roleLabel}</div>
           <button className="btn-ghost mt-2 w-full" onClick={() => logout()}>
             Выйти
           </button>
@@ -94,7 +123,7 @@ export function Layout() {
         <div className="sticky top-0 z-20 flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-6 py-2 text-sm backdrop-blur">
           <span className="text-slate-400">Вы вошли как:</span>
           <span className="font-semibold text-slate-700">{user?.fio}</span>
-          <span className="badge bg-brand-50 text-brand-700">{isAdmin ? 'Администратор' : 'Оператор'}</span>
+          <span className="badge bg-brand-50 text-brand-700">{roleLabel}</span>
         </div>
         <div className="mx-auto max-w-7xl p-6">
           <Outlet />

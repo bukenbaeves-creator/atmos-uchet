@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
-import { asyncHandler, notFound } from '../lib/http.js';
+import { asyncHandler, badRequest, notFound } from '../lib/http.js';
+import { requireAdmin } from '../middleware/rbac.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { normalizePhone } from '../lib/phone.js';
 import { computeOperation } from '../services/compute.js';
 import { serialize } from '../lib/serialize.js';
 import { patientSearchOR } from '../lib/search.js';
+import { writeAudit } from '../services/audit.service.js';
 import { requiredString, birthDateSchema } from '../schemas.js';
 
 const schema = z.object({
@@ -64,6 +66,37 @@ router.get(
       payments: serialize(patient.payments),
       totalBalance,
     });
+  }),
+);
+
+// Слияние дубля пациента в основную карточку (admin). Переносит все записи
+// (консультации, операции, платежи, списания), дубль помечается удалённым.
+router.post(
+  '/:id/merge',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const { intoId } = z.object({ intoId: z.coerce.number().int().positive() }).parse(req.body);
+    if (id === intoId) throw badRequest('Нельзя объединить карточку саму с собой');
+
+    await prisma.$transaction(async (tx) => {
+      const dup = await tx.patient.findFirst({ where: { id, deletedAt: null } });
+      const target = await tx.patient.findFirst({ where: { id: intoId, deletedAt: null } });
+      if (!dup) throw notFound('Карточка-дубль не найдена');
+      if (!target) throw notFound('Основная карточка не найдена');
+
+      await tx.consultation.updateMany({ where: { patientId: id }, data: { patientId: intoId } });
+      await tx.operation.updateMany({ where: { patientId: id }, data: { patientId: intoId } });
+      await tx.payment.updateMany({ where: { patientId: id }, data: { patientId: intoId } });
+      await tx.expenseWriteoff.updateMany({ where: { patientId: id }, data: { patientId: intoId } });
+
+      const updated = await tx.patient.update({
+        where: { id },
+        data: { deletedAt: new Date(), deletedBy: req.user!.id, mergedIntoId: intoId, updatedBy: req.user!.id },
+      });
+      await writeAudit(req, { action: 'update', entity: 'patient', entityId: id, before: dup, after: updated }, tx);
+    });
+    res.json({ ok: true });
   }),
 );
 

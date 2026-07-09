@@ -46,6 +46,7 @@ const schema = z
 const router = makeCrudRouter({
   entity: 'consultation',
   model: prisma.consultation,
+  roles: ['operator', 'admin'], // содержит суммы оплат — скрыто от медсестры
   createSchema: schema,
   include: { patient: true },
   orderBy: { dateKons: 'desc' },

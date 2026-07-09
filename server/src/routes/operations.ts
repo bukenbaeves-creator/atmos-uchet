@@ -25,6 +25,7 @@ const schema = z.object({
 const router = makeCrudRouter({
   entity: 'operation',
   model: prisma.operation,
+  roles: ['operator', 'admin'], // содержит стоимость операции — скрыто от медсестры
   createSchema: schema,
   include: {
     patient: true,

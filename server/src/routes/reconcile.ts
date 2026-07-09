@@ -2,10 +2,11 @@ import { Router } from 'express';
 import multer from 'multer';
 import { asyncHandler, badRequest } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { parseStatement, reconcile } from '../services/reconcile.service.js';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole('operator', 'admin')); // сверка денег — скрыта от медсестры
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
