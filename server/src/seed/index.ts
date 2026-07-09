@@ -52,12 +52,15 @@ function randomPhone(): string {
 async function main() {
   console.log('▶ Сид: справочники и пользователи...');
 
-  // 1) Справочники (идемпотентно)
+  // 1) Справочники (идемпотентно). ВАЖНО: существующие значения НЕ трогаем —
+  // иначе повторный запуск сида (деплой/пробуждение сервиса) вернул бы обратно
+  // активность значений, которые администратор деактивировал. Создаём только
+  // отсутствующие; правки активности/порядка остаются за администратором.
   for (const [category, values] of Object.entries(DICTIONARY_SEED)) {
     for (let i = 0; i < values.length; i++) {
       await prisma.dictionaryItem.upsert({
         where: { category_label: { category, label: values[i] } },
-        update: { active: true, sortOrder: i },
+        update: {}, // не перезаписываем active/sortOrder у уже существующих
         create: { category, label: values[i], sortOrder: i },
       });
     }
