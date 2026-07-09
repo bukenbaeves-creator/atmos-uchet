@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, ApiError } from '../api/client';
+import { apiGet, apiPost, apiUpload, ApiError, receiptTemplateUrl } from '../api/client';
 import type { ListResponse } from '../api/hooks';
 import { formatDate, isExpired } from '../lib/format';
 import { PageHeader, Spinner, EmptyState, Modal, Pagination, Hint } from '../components/ui';
@@ -49,7 +49,12 @@ export function Receipts() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [detail, setDetail] = useState<Receipt | null>(null);
+
+  const refresh = () => {
+    for (const k of ['receipts', 'stock', 'nomenclature']) qc.invalidateQueries({ queryKey: [k] });
+  };
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['receipts', { page }],
@@ -78,9 +83,14 @@ export function Receipts() {
         title="Приход на склад"
         subtitle="Оприходование материалов. Клик по строке — состав прихода. Новые наименования уходят на подтверждение в «Номенклатуру»."
         actions={
-          <button className="btn-primary" onClick={() => setOpen(true)}>
-            + Приход
-          </button>
+          <>
+            <button className="btn-ghost" onClick={() => setImporting(true)}>
+              Загрузить из Excel
+            </button>
+            <button className="btn-primary" onClick={() => setOpen(true)}>
+              + Приход
+            </button>
+          </>
         }
       />
 
@@ -98,17 +108,129 @@ export function Receipts() {
       )}
 
       <Modal open={open} onClose={() => setOpen(false)} wide title="Новый приход">
-        <ReceiptForm
-          onDone={() => setOpen(false)}
-          onSaved={() => {
-            for (const k of ['receipts', 'stock', 'nomenclature']) qc.invalidateQueries({ queryKey: [k] });
-          }}
-        />
+        <ReceiptForm onDone={() => setOpen(false)} onSaved={refresh} />
+      </Modal>
+
+      <Modal open={importing} onClose={() => setImporting(false)} title="Импорт прихода из Excel">
+        <ImportForm onDone={() => setImporting(false)} onSaved={refresh} />
       </Modal>
 
       <Modal open={detail != null} onClose={() => setDetail(null)} wide title={`Приход · ${detail ? formatDate(detail.date) : ''}`}>
         {detail && <ReceiptDetail receipt={detail} />}
       </Modal>
+    </div>
+  );
+}
+
+// Импорт прихода из Excel: выбор файла, дата/поставщик, отчёт о результате.
+function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [supplier, setSupplier] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<{ imported: number; errors: { row: number; reason: string }[] } | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const upload = async (override: boolean) => {
+    if (!file) {
+      setError('Выберите файл');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('date', date);
+      if (supplier) fd.append('supplier', supplier);
+      if (override) fd.append('override', 'true');
+      const res = await apiUpload<{ imported: number; errors: { row: number; reason: string }[] }>('/receipts/import', fd);
+      setResult(res);
+      setConflict(false);
+      if (res.imported > 0) onSaved();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setConflict(true);
+        setError(err.message);
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Не удалось импортировать');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (result) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Импортировано строк: <b>{result.imported}</b>
+        </div>
+        {result.errors.length > 0 && (
+          <div>
+            <div className="mb-1 text-sm font-medium text-rose-700">Не загружены строки с ошибками:</div>
+            <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 text-sm">
+              {result.errors.map((e, i) => (
+                <div key={i} className="flex gap-3 border-b border-slate-100 px-3 py-1.5 last:border-0">
+                  <span className="w-16 shrink-0 text-slate-400">стр. {e.row}</span>
+                  <span>{e.reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <button type="button" className="btn-primary" onClick={onDone}>
+            Готово
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-500">
+        Загрузите файл по <a className="text-brand-600 hover:underline" href={receiptTemplateUrl()}>шаблону</a>. Новые
+        наименования уйдут на подтверждение в «Номенклатуру». Строки с ошибками будут показаны отдельно.
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="label">Дата прихода *</label>
+          <input type="date" className="input" required min="2020-01-01" value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Поставщик</label>
+          <input className="input" value={supplier} onChange={(e) => setSupplier(e.target.value)} />
+        </div>
+      </div>
+      <div>
+        <label className="label">Файл (.xlsx или .csv) *</label>
+        <input
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm hover:file:bg-slate-200"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+      </div>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onDone}>
+          Отмена
+        </button>
+        {conflict ? (
+          <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true)}>
+            {busy ? 'Загрузка…' : 'Загрузить повторно'}
+          </button>
+        ) : (
+          <button type="button" className="btn-primary" disabled={busy || !file} onClick={() => upload(false)}>
+            {busy ? 'Загрузка…' : 'Импортировать'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

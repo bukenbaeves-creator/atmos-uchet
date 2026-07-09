@@ -25,6 +25,7 @@ import receiptsRouter from './routes/receipts.js';
 import writeoffsRouter from './routes/writeoffs.js';
 import stockRouter from './routes/stock.js';
 import expenseExportRouter from './routes/expense-export.js';
+import expenseAnalyticsRouter from './routes/expense-analytics.js';
 
 const app = express();
 
@@ -69,6 +70,7 @@ app.use('/api/receipts', receiptsRouter);
 app.use('/api/writeoffs', writeoffsRouter);
 app.use('/api/stock', stockRouter);
 app.use('/api/expense-export', expenseExportRouter);
+app.use('/api/expense-analytics', expenseAnalyticsRouter);
 
 // Production: раздаём собранный фронтенд (single-origin) + SPA-fallback.
 // В dev папки public нет — блок пропускается, клиент обслуживает Vite.

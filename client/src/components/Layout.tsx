@@ -33,6 +33,7 @@ const SECTIONS: Section[] = [
       { to: '/stock', label: 'Склад · остатки', icon: '📦' },
       { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️' },
       { to: '/receipts', label: 'Приход', icon: '📥', roles: ['admin'] },
+      { to: '/expense-analytics', label: 'Аналитика расхода', icon: '📈' },
     ],
   },
   {

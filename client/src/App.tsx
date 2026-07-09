@@ -20,6 +20,7 @@ import { Writeoffs } from './pages/Writeoffs';
 import { Stock } from './pages/Stock';
 import { Nomenclature } from './pages/Nomenclature';
 import { Receipts } from './pages/Receipts';
+import { ExpenseAnalytics } from './pages/ExpenseAnalytics';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -72,6 +73,7 @@ export function App() {
         <Route path="/writeoffs" element={<Writeoffs />} />
         <Route path="/stock" element={<Stock />} />
         <Route path="/nomenclature" element={<Nomenclature />} />
+        <Route path="/expense-analytics" element={<ExpenseAnalytics />} />
         <Route path="/receipts" element={<RequireRole roles={['admin']}><Receipts /></RequireRole>} />
         {/* Денежные/продажные разделы — скрыты от медсестры */}
         <Route path="/consultations" element={<RequireRole roles={SALES}><Consultations /></RequireRole>} />
