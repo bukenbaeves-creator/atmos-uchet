@@ -1,25 +1,29 @@
-# Render Blueprint — разворачивает Postgres + один web-сервис (API + фронтенд).
+# Render Blueprint — web-сервис (API + фронтенд). База данных вынесена в Neon
+# (persistent Postgres, не удаляется через 30 дней как free-БД Render).
 # Подключение: Render Dashboard → New → Blueprint → выбрать этот репозиторий.
+#
+# Старая база Render `atmos-db` оставлена как резерв на переходный период —
+# после проверки работы на Neon её можно удалить (и убрать блок databases ниже).
 databases:
   - name: atmos-db
     databaseName: atmos
     user: atmos
-    region: frankfurt # ЕС; учитывайте требования к хранению ПДн
-    plan: free # для продакшена смените на платный (free-БД временная)
+    region: frankfurt
+    plan: free # РЕЗЕРВ; приложение больше на неё не смотрит (см. DATABASE_URL)
 
 services:
   - type: web
     name: atmos
     runtime: docker
     dockerfilePath: ./Dockerfile.prod
-    region: frankfurt # тот же регион, что и БД (для internal-подключения)
+    region: frankfurt
     plan: free # free засыпает при простое; для клиники — платный
     healthCheckPath: /api/health
     envVars:
+      # DATABASE_URL — строка подключения к Neon. Задаётся вручную в Render
+      # Dashboard (Environment), в репозиторий секрет НЕ пишем.
       - key: DATABASE_URL
-        fromDatabase:
-          name: atmos-db
-          property: connectionString
+        sync: false
       - key: JWT_SECRET
         generateValue: true # Render сгенерирует секрет автоматически
       - key: NODE_ENV
