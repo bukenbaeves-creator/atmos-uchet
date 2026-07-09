@@ -182,7 +182,12 @@ function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: 
       onSaved();
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Ошибка');
+      // Показываем конкретную причину из деталей валидации, а не общий текст
+      if (err instanceof ApiError) {
+        setError(err.details?.length ? err.details.map((d) => d.message).join('; ') : err.message);
+      } else {
+        setError('Ошибка');
+      }
     } finally {
       setBusy(false);
     }
@@ -193,12 +198,12 @@ function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: 
       {!editing && (
         <div>
           <label className="label">Логин</label>
-          <input className="input" value={login} onChange={(e) => setLogin(e.target.value)} />
+          <input className="input" value={login} onChange={(e) => setLogin(e.target.value)} placeholder="минимум 3 символа" />
         </div>
       )}
       <div>
         <label className="label">ФИО</label>
-        <input className="input" value={fio} onChange={(e) => setFio(e.target.value)} />
+        <input className="input" value={fio} onChange={(e) => setFio(e.target.value)} placeholder="например, Иванова Мария" />
       </div>
       <div>
         <label className="label">Роль</label>
@@ -210,7 +215,7 @@ function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: 
       </div>
       <div>
         <label className="label">{editing ? 'Новый пароль (если менять)' : 'Пароль'}</label>
-        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="минимум 6 символов" />
       </div>
       {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       <div className="flex justify-end gap-2">
