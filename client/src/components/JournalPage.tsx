@@ -26,6 +26,10 @@ interface Props<T extends JournalRecord> {
   newButtonLabel?: string;
   // Дополнительные кнопки в колонке действий (например, «Итог» у консультаций)
   rowActions?: (row: T) => ReactNode;
+  // Кастомное правило доступности кнопки «Изменить» (иначе — общее canEditRow)
+  rowEditable?: (row: T, user: { id: number; role: string } | null) => boolean;
+  // Доп. кнопки в шапке (например, «Возврат» в Кассе)
+  headerActions?: ReactNode;
 }
 
 export function canEditRow(row: JournalRecord, user: { id: number; role: string } | null): boolean {
@@ -47,6 +51,8 @@ export function JournalPage<T extends JournalRecord>({
   onRowClick,
   newButtonLabel = 'Добавить',
   rowActions,
+  rowEditable,
+  headerActions,
 }: Props<T>) {
   const { user, isAdmin } = useAuth();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, search: '' });
@@ -74,7 +80,7 @@ export function JournalPage<T extends JournalRecord>({
     cell: (row) => (
       <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
         {rowActions?.(row)}
-        {canEditRow(row, user) && (
+        {(rowEditable ? rowEditable(row, user) : canEditRow(row, user)) && (
           <button className="btn-ghost px-2 py-1 text-xs" onClick={() => openEdit(row)}>
             Изменить
           </button>
@@ -100,6 +106,7 @@ export function JournalPage<T extends JournalRecord>({
         subtitle={subtitle}
         actions={
           <>
+            {headerActions}
             {exportJournal && (
               <a className="btn-ghost" href={exportUrl(exportJournal)}>
                 Экспорт в Excel

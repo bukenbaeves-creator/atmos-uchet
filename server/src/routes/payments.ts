@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
-import { badRequest } from '../lib/http.js';
+import { asyncHandler, badRequest } from '../lib/http.js';
 import { assertDictionaryValue, ensureDictionaryValue } from '../services/dictionary.service.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
 import {
@@ -180,5 +180,54 @@ const router = makeCrudRouter({
     return { ...rest, patientId, operationId };
   },
 });
+
+// Возврат денег пациенту (оператор и админ). Отдельная денежная операция:
+// direction=refund, в расчётах вычитается из выручки и «оплачено» по операции.
+const refundSchema = z.object({
+  patient: patientInputSchema,
+  operationId: z.coerce.number().int().positive().optional().nullable(),
+  amount: moneyAmount({ positive: true, msg: 'Укажите сумму возврата больше нуля' }),
+  date: requiredDate('Необходимо указать дату возврата'),
+  payMethod: requiredString('Необходимо указать способ возврата'),
+  terminal: z.string().optional().nullable(),
+  payNote: requiredString('Укажите причину возврата'),
+});
+
+router.post(
+  '/refund',
+  asyncHandler(async (req, res) => {
+    const d = refundSchema.parse(req.body);
+    await assertDictionaryValue('pay_method', d.payMethod);
+    await assertDictionaryValue('terminal', d.terminal ?? null);
+
+    const created = await prisma.$transaction(async (tx) => {
+      const patientId = await resolvePatient(d.patient, req, tx);
+      if (d.operationId) {
+        const op = await tx.operation.findFirst({ where: { id: d.operationId, deletedAt: null } });
+        if (!op) throw badRequest('Операция не найдена');
+        if (op.patientId !== patientId) throw badRequest('Операция принадлежит другому пациенту');
+      }
+      const refund = await tx.payment.create({
+        data: {
+          patientId,
+          operationId: d.operationId ?? null,
+          direction: 'refund',
+          date: d.date,
+          serviceType: 'Возврат',
+          amount: d.amount,
+          payMethod: d.payMethod,
+          terminal: d.terminal ?? null,
+          payNote: d.payNote,
+          createdBy: req.user!.id,
+          updatedBy: req.user!.id,
+        },
+        include: { patient: true, operation: true },
+      });
+      await writeAudit(req, { action: 'create', entity: 'payment', entityId: refund.id, after: refund }, tx);
+      return refund;
+    });
+    res.status(201).json(created);
+  }),
+);
 
 export default router;

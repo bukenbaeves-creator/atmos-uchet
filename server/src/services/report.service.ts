@@ -41,7 +41,7 @@ export async function dashboard(period: Period) {
         OR: [{ operationId: null }, { operation: { is: { deletedAt: null } } }],
         ...dateFilter(period, 'date'),
       },
-      select: { amount: true, date: true, payMethod: true, doctor: true },
+      select: { amount: true, date: true, payMethod: true, doctor: true, direction: true },
     }),
     prisma.operation.findMany({
       where: { deletedAt: null, patient: { is: { deletedAt: null } }, ...dateFilter(period, 'dateOp') },
@@ -53,7 +53,11 @@ export async function dashboard(period: Period) {
     }),
   ]);
 
-  const revenue = round2(payments.reduce((s, p) => s + num(p.amount), 0));
+  // Сумма со знаком: возврат (refund) вычитается из выручки/срезов
+  const signed = (p: { amount: unknown; direction?: string | null }) =>
+    p.direction === 'refund' ? -num(p.amount) : num(p.amount);
+
+  const revenue = round2(payments.reduce((s, p) => s + signed(p), 0));
 
   // Конверсия в оплату
   const known = consultations.filter((c) => c.stage);
@@ -65,7 +69,7 @@ export async function dashboard(period: Period) {
   for (const p of payments) {
     if (!p.date) continue;
     const k = monthKey(new Date(p.date));
-    byMonthMap.set(k, (byMonthMap.get(k) ?? 0) + num(p.amount));
+    byMonthMap.set(k, (byMonthMap.get(k) ?? 0) + signed(p));
   }
   const revenueByMonth = [...byMonthMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -75,7 +79,7 @@ export async function dashboard(period: Period) {
   const byMethodMap = new Map<string, number>();
   for (const p of payments) {
     const k = p.payMethod || '(не указан)';
-    byMethodMap.set(k, (byMethodMap.get(k) ?? 0) + num(p.amount));
+    byMethodMap.set(k, (byMethodMap.get(k) ?? 0) + signed(p));
   }
   const byPayMethod = [...byMethodMap.entries()]
     .map(([name, value]) => ({ name, value: round2(value) }))
@@ -93,7 +97,7 @@ export async function dashboard(period: Period) {
   const byDoctorMap = new Map<string, number>();
   for (const p of payments) {
     if (!p.doctor) continue;
-    byDoctorMap.set(p.doctor, (byDoctorMap.get(p.doctor) ?? 0) + num(p.amount));
+    byDoctorMap.set(p.doctor, (byDoctorMap.get(p.doctor) ?? 0) + signed(p));
   }
   const byDoctor = [...byDoctorMap.entries()]
     .map(([name, value]) => ({ name, value: round2(value) }))

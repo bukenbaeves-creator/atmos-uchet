@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import dayjs from 'dayjs';
 import { useQueryClient } from '@tanstack/react-query';
-import { JournalPage, canEditRow } from '../components/JournalPage';
+import { JournalPage } from '../components/JournalPage';
 import { useDictionaries } from '../lib/dictionaries';
 import { useAuth } from '../lib/auth';
 import { apiPatch } from '../api/client';
@@ -61,15 +60,20 @@ const fields: Field[] = [
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
 
-// Мини-форма «Итог»: оплата часто вносится заранее, а консультация проходит позже.
-// Оператор может внести итог своей консультации, пока её дата не прошла.
+// Мини-форма «Итог».
 const resultFields: Field[] = [
   { name: 'stage', label: 'Итог консультации', type: 'select', dict: 'consultation_stage', allowCustom: true, span: 2 },
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
 
-// Дата консультации ещё не прошла (сегодня — тоже «не прошла»)
-const konsNotPassed = (c: Consultation) => !!c.dateKons && !dayjs(c.dateKons).isBefore(dayjs(), 'day');
+// Оператор правит свою консультацию, пока итог не заполнен (даже если дата прошла);
+// после заполнения итога — только админ. Перенос даты и поздняя оплата — через
+// обычную форму редактирования.
+const consultationEditable = (c: Consultation, user: { id: number; role: string } | null) => {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return c.createdBy === user.id && !c.stage;
+};
 
 export function Consultations() {
   const { data: dict } = useDictionaries();
@@ -77,10 +81,8 @@ export function Consultations() {
   const qc = useQueryClient();
   const [resultFor, setResultFor] = useState<Consultation | null>(null);
 
-  // Кнопка «Итог»: когда полное редактирование уже недоступно (не свой день),
-  // но запись своя и дата консультации ещё не прошла.
-  const canFillResult = (c: Consultation) =>
-    !!user && !canEditRow(c, user) && c.createdBy === user.id && konsNotPassed(c);
+  // Кнопка «Итог» — быстрый ввод итога, пока запись доступна к правке и итог не задан
+  const canFillResult = (c: Consultation) => consultationEditable(c, user ?? null) && !c.stage;
 
   const columns: Column<Consultation>[] = [
     { header: 'Пациент', cell: (c) => <span className="font-medium">{c.patient?.fio ?? '—'}</span> },
@@ -101,11 +103,12 @@ export function Consultations() {
       <JournalPage<Consultation>
         entity="consultations"
         title="Консультации"
-        subtitle="Итог (стадия воронки) заполняется после консультации — кнопка «Итог» доступна, пока дата консультации не прошла. Оплаты вносятся во вкладке «Касса»."
+        subtitle="Оператор правит свою запись, пока итог не заполнен (перенос даты, поздняя оплата). После заполнения итога запись закрыта. Оплата отражается в «Кассе»."
         columns={columns}
         fields={fields}
         exportJournal="consultations"
         newButtonLabel="Консультацию"
+        rowEditable={consultationEditable}
         rowActions={(c) =>
           canFillResult(c) ? (
             <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setResultFor(c)}>

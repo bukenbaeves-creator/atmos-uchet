@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { JournalPage } from '../components/JournalPage';
 import { formatDate, formatMoney } from '../lib/format';
 import { Badge } from '../components/ui';
@@ -56,15 +57,25 @@ export function Operations() {
     },
   ];
 
+  // Оператор правит свою операцию до «дата операции + 1 день»; после — только админ.
+  const operationEditable = (o: Operation, user: { id: number; role: string } | null) => {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (o.createdBy !== user.id) return false;
+    if (!o.dateOp) return true;
+    return !dayjs().isAfter(dayjs(o.dateOp).add(1, 'day'), 'day');
+  };
+
   return (
     <JournalPage<Operation>
       entity="operations"
       title="Операции"
-      subtitle="Стоимость, оплата и остаток рассчитываются автоматически."
+      subtitle="Стоимость, оплата и остаток рассчитываются автоматически. Оператор правит запись до «дата операции + 1 день»."
       columns={columns}
       fields={fields}
       exportJournal="operations"
       newButtonLabel="Операцию"
+      rowEditable={operationEditable}
     />
   );
 }

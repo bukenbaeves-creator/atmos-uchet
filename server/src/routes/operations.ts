@@ -22,11 +22,26 @@ const schema = z.object({
   note: optionalString(),
 });
 
+// Оператор правит свою операцию до «дата операции + 1 день» включительно
+// (перенос даты, поздняя оплата вносится платежом в Кассе). Админ — всегда.
+function operationCanEdit(user: { id: number; role: string }, record: Record<string, unknown>): boolean {
+  if (user.role === 'admin') return true;
+  if (record.createdBy !== user.id) return false;
+  const dateOp = record.dateOp as Date | null;
+  if (!dateOp) return true;
+  const d = new Date(dateOp);
+  const deadline = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); // конец «дня операции + 1»
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return today <= deadline;
+}
+
 const router = makeCrudRouter({
   entity: 'operation',
   model: prisma.operation,
   roles: ['operator', 'admin'], // содержит стоимость операции — скрыто от медсестры
   createSchema: schema,
+  canEdit: operationCanEdit,
   include: {
     patient: true,
     consultation: true,

@@ -116,6 +116,7 @@ async function buildData(journal: string): Promise<{ columns: Column[]; rows: Ro
           { header: 'ID', key: 'id', width: 8 },
           { header: 'Пациент', key: 'patient', width: 28 },
           { header: 'Дата', key: 'date', width: 14 },
+          { header: 'Тип', key: 'kind', width: 12 },
           { header: 'Вид услуги', key: 'serviceType', width: 18 },
           { header: 'Сумма', key: 'amount', width: 14 },
           { header: 'Способ оплаты', key: 'payMethod', width: 18 },
@@ -127,7 +128,9 @@ async function buildData(journal: string): Promise<{ columns: Column[]; rows: Ro
           ...p,
           patient: p.patient.fio,
           date: d(p.date),
-          amount: num(p.amount),
+          kind: p.direction === 'refund' ? 'Возврат' : 'Платёж',
+          // Возврат — со знаком «минус» для корректной суммы в 1С
+          amount: p.direction === 'refund' ? -num(p.amount) : num(p.amount),
         })),
       };
     }

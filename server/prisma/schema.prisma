@@ -37,6 +37,12 @@ enum ReceiptSource {
   import
 }
 
+// Направление денежной операции: платёж (приход) или возврат (расход пациенту)
+enum PaymentDirection {
+  payment
+  refund
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   login        String   @unique
@@ -107,6 +113,7 @@ model Consultation {
   amount            Decimal?  @db.Decimal(14, 2)
 
   operations Operation[]
+  payments   Payment[]
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -152,20 +159,23 @@ model Operation {
 }
 
 model Payment {
-  id          Int        @id @default(autoincrement())
-  patient     Patient    @relation(fields: [patientId], references: [id])
-  patientId   Int
-  operation   Operation? @relation(fields: [operationId], references: [id])
-  operationId Int?
-  date        DateTime?
-  serviceType String?
-  opType      String? // вид операции — заполняется, если услуга «Операция»/«Консультация»
-  amount      Decimal    @default(0) @db.Decimal(14, 2)
-  payMethod   String?
-  terminal    String?
-  payNote     String?
-  zapis       String?
-  doctor      String?
+  id             Int              @id @default(autoincrement())
+  patient        Patient          @relation(fields: [patientId], references: [id])
+  patientId      Int
+  operation      Operation?       @relation(fields: [operationId], references: [id])
+  operationId    Int?
+  consultation   Consultation?    @relation(fields: [consultationId], references: [id])
+  consultationId Int? // платёж, привязанный к консультации (синхронизация поздней оплаты)
+  direction      PaymentDirection @default(payment)
+  date           DateTime?
+  serviceType    String?
+  opType         String? // вид операции — заполняется, если услуга «Операция»/«Консультация»
+  amount         Decimal          @default(0) @db.Decimal(14, 2)
+  payMethod      String?
+  terminal       String?
+  payNote        String?
+  zapis          String?
+  doctor         String?
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -176,6 +186,7 @@ model Payment {
 
   @@index([patientId])
   @@index([operationId])
+  @@index([consultationId])
   @@index([date])
 }
 

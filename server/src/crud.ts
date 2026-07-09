@@ -42,6 +42,16 @@ export interface CrudConfig {
   // Хук после создания (например, создать связанный платёж из консультации).
   // tx — тот же транзакционный клиент, что и у create.
   afterCreate?: (created: Record<string, unknown>, req: Request, tx: PrismaClientOrTx) => Promise<void>;
+  // Хук после обновления (например, синхронизировать оплату консультации).
+  afterUpdate?: (
+    updated: Record<string, unknown>,
+    before: Record<string, unknown>,
+    req: Request,
+    tx: PrismaClientOrTx,
+  ) => Promise<void>;
+  // Кастомное правило права на редактирование (иначе — общее canEditRecord:
+  // оператор правит свою запись в день создания).
+  canEdit?: (user: { id: number; role: string }, record: Record<string, unknown>) => boolean;
 }
 
 async function present(cfg: CrudConfig, row: Record<string, unknown>) {
@@ -125,8 +135,9 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
       const id = Number(req.params.id);
       const existing = await cfg.model.findFirst({ where: { id, deletedAt: null }, include: cfg.include });
       if (!existing) throw notFound();
-      if (!canEditRecord(req.user!, existing)) {
-        throw forbidden('Оператор может редактировать только свою запись в день её создания');
+      const allowed = (cfg.canEdit ?? canEditRecord)(req.user!, existing);
+      if (!allowed) {
+        throw forbidden('Редактирование этой записи недоступно');
       }
       const schema = cfg.updateSchema ?? cfg.createSchema;
       let data = schema.parse(req.body) as Record<string, unknown>;
@@ -140,6 +151,7 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
           include: cfg.include,
         });
         await writeAudit(req, { action: 'update', entity: cfg.entity, entityId: id, before: existing, after: row }, tx);
+        if (cfg.afterUpdate) await cfg.afterUpdate(row, existing, req, tx);
         return row;
       });
       res.json(await present(cfg, updated));

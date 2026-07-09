@@ -11,6 +11,7 @@ const CENT = 0.005;
 export interface PaymentLike {
   amount: Num;
   deletedAt?: Date | null;
+  direction?: string | null; // 'payment' | 'refund' — возврат вычитается
 }
 
 export interface OperationLike {
@@ -30,8 +31,11 @@ export interface OperationComputed {
 
 export function computeOperation(op: OperationLike): OperationComputed {
   const totalDue = round2(n(op.cost) + n(op.anesthesiaCost));
+  // Оплачено = платежи минус возвраты (refund вычитается)
   const paid = round2(
-    (op.payments ?? []).filter((p) => !p.deletedAt).reduce((sum, p) => sum + n(p.amount), 0),
+    (op.payments ?? [])
+      .filter((p) => !p.deletedAt)
+      .reduce((sum, p) => sum + (p.direction === 'refund' ? -n(p.amount) : n(p.amount)), 0),
   );
   const balance = round2(totalDue - paid);
   return {
