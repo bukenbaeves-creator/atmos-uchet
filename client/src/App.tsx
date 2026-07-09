@@ -46,11 +46,12 @@ function RequireRole({ roles, children }: { roles: Role[]; children: ReactNode }
 
 const SALES: Role[] = ['operator', 'admin'];
 
-// Домашняя страница зависит от роли: медсестра попадает на «Расход материалов»
-// (денежный дашборд ей недоступен), остальные — на дашборд.
+// Домашняя страница зависит от роли: дашборд (сводка по деньгам) — только админу;
+// медсестра → «Расход материалов»; оператор → «Пациенты».
 function Home() {
   const { user } = useAuth();
   if (user?.role === 'nurse') return <Navigate to="/writeoffs" replace />;
+  if (user?.role === 'operator') return <Navigate to="/patients" replace />;
   return <Dashboard />;
 }
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/rbac.js';
+import { requireRole, requireAdmin } from '../middleware/rbac.js';
 import { dashboard, prepayments, errorCheck, type Period } from '../services/report.service.js';
 
 const router = Router();
@@ -23,6 +23,7 @@ function parsePeriod(q: Record<string, unknown>): Period {
 
 router.get(
   '/dashboard',
+  requireAdmin, // сводный дашборд по деньгам — только администратору
   asyncHandler(async (req, res) => {
     res.json(await dashboard(parsePeriod(req.query as Record<string, unknown>)));
   }),

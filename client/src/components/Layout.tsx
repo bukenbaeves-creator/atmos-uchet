@@ -18,22 +18,13 @@ interface Section {
 // Денежные/продажные разделы: скрыты от медсестры (и на сервере они ей запрещены).
 const SALES: Role[] = ['operator', 'admin'];
 
-// Разделы меню. Касса — вверху (второй пункт), Дашборд — в конце отчётов.
+// Разделы меню. Касса — вверху (второй пункт). Дашборд — только админу.
+// «Склад и расходы» — ниже «Настроек».
 const SECTIONS: Section[] = [
   {
     items: [
       { to: '/patients', label: 'Пациенты', icon: '🧑' },
       { to: '/cashbox', label: 'Касса', icon: '🧾', roles: SALES },
-    ],
-  },
-  {
-    title: 'Склад и расходы',
-    items: [
-      { to: '/writeoffs', label: 'Расход материалов', icon: '💊' },
-      { to: '/stock', label: 'Склад · остатки', icon: '📦' },
-      { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️' },
-      { to: '/receipts', label: 'Приход', icon: '📥', roles: ['admin'] },
-      { to: '/expense-analytics', label: 'Аналитика расхода', icon: '📈' },
     ],
   },
   {
@@ -52,12 +43,22 @@ const SECTIONS: Section[] = [
       { to: '/kpi', label: 'KPI менеджеров', icon: '🎯' },
       { to: '/reconcile', label: 'Сверка с банком', icon: '🏦' },
       { to: '/errors', label: 'Проверка ошибок', icon: '⚠️' },
-      { to: '/', label: 'Дашборд', icon: '📊', end: true },
+      { to: '/', label: 'Дашборд', icon: '📊', end: true, roles: ['admin'] },
     ],
   },
   {
     title: 'Настройки',
     items: [{ to: '/dictionaries', label: 'Справочники', icon: '📚' }],
+  },
+  {
+    title: 'Склад и расходы',
+    items: [
+      { to: '/writeoffs', label: 'Расход материалов', icon: '💊' },
+      { to: '/stock', label: 'Склад · остатки', icon: '📦' },
+      { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️' },
+      { to: '/receipts', label: 'Приход', icon: '📥', roles: ['admin'] },
+      { to: '/expense-analytics', label: 'Аналитика расхода', icon: '📈' },
+    ],
   },
 ];
 
