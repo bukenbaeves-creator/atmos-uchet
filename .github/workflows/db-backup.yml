@@ -1,0 +1,43 @@
+name: Резервная копия БД (Neon)
+
+# Ежедневный дамп базы Neon и сохранение как артефакт GitHub (offsite-копия).
+# Требуется секрет репозитория NEON_DATABASE_URL — «прямая» строка подключения
+# к Neon (без -pooler), например:
+#   postgresql://neondb_owner:ПАРОЛЬ@ep-...eu-central-1.aws.neon.tech/neondb?sslmode=require
+# Добавить: GitHub → Settings → Secrets and variables → Actions → New repository secret.
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # ежедневно 02:00 UTC (~07:00 Алматы)
+  workflow_dispatch: {} # можно запустить вручную (вкладка Actions → Run workflow)
+
+# Не даём параллельных запусков перекрываться
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Снять дамп базы (pg_dump, Postgres 18)
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ Секрет NEON_DATABASE_URL не задан в настройках репозитория."
+            exit 1
+          fi
+          STAMP=$(date +%Y-%m-%d)
+          # Клиент pg_dump 18 — версия совпадает с сервером Neon; строку не печатаем в лог.
+          docker run --rm -e PGCONNECT_TIMEOUT=30 postgres:18 \
+            pg_dump --no-owner --no-privileges "$DATABASE_URL" | gzip > "atmos-backup-$STAMP.sql.gz"
+          echo "Готово:"; ls -lh atmos-backup-*.sql.gz
+
+      - name: Сохранить копию как артефакт (хранится 30 дней)
+        uses: actions/upload-artifact@v4
+        with:
+          name: atmos-db-backup
+          path: atmos-backup-*.sql.gz
+          retention-days: 30
+          if-no-files-found: error
