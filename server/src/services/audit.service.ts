@@ -4,7 +4,7 @@ import type { PrismaClientOrTx } from '../lib/prisma.js';
 import { serialize } from '../lib/serialize.js';
 
 interface AuditInput {
-  action: 'create' | 'update' | 'delete' | 'restore' | 'login' | 'export';
+  action: 'create' | 'update' | 'delete' | 'restore' | 'login' | 'login_failed' | 'export';
   entity: string;
   entityId?: number | null;
   before?: unknown;

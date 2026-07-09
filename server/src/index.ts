@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
@@ -32,6 +33,30 @@ const app = express();
 // За обратным прокси (Render/Nginx): доверяем заголовкам X-Forwarded-* —
 // нужно для secure-cookie по HTTPS и корректного IP в аудите.
 if (config.nodeEnv === 'production') app.set('trust proxy', 1);
+
+// Заголовки безопасности. Приложение самодостаточно (внешних CDN нет, один origin),
+// поэтому строгая CSP. HSTS — только в production (по https).
+const isProd = config.nodeEnv === 'production';
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"], // inline-стили (recharts/атрибуты)
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"], // анти-clickjacking
+        upgradeInsecureRequests: isProd ? [] : null,
+      },
+    },
+    hsts: isProd ? { maxAge: 15552000, includeSubDomains: true } : false,
+    crossOriginEmbedderPolicy: false, // не мешаем загрузке ресурсов SPA
+  }),
+);
 
 app.use(cors({ origin: config.clientOrigin, credentials: true }));
 app.use(express.json({ limit: '2mb' }));

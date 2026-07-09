@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
-import { Register } from './pages/Register';
 import { Dashboard } from './pages/Dashboard';
 import { Patients } from './pages/Patients';
 import { PatientCard } from './pages/PatientCard';
@@ -59,7 +58,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
+      {/* Саморегистрация закрыта: /register уводит на вход */}
+      <Route path="/register" element={<Navigate to="/login" replace />} />
       <Route
         element={
           <RequireAuth>

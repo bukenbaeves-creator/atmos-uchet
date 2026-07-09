@@ -9,7 +9,7 @@ import { formatDate } from '../lib/format';
 export function Admin() {
   return (
     <div>
-      <PageHeader title="Пользователи" subtitle="Доступ к системе и коды регистрации." />
+      <PageHeader title="Пользователи" subtitle="Доступ к системе. Пользователей заводит администратор." />
       <UsersTab />
     </div>
   );
@@ -27,62 +27,6 @@ interface User {
   createdAt: string;
 }
 
-// Коды регистрации (роль определяется кодом). Виден только админу.
-function RegCodes() {
-  const qc = useQueryClient();
-  const { data } = useQuery({
-    queryKey: ['reg-codes'],
-    queryFn: () => apiGet<{ operator: string; admin: string }>('/auth/reg-codes'),
-  });
-  const [edit, setEdit] = useState<{ operator: string; admin: string } | null>(null);
-  const save = useMutation({
-    mutationFn: (b: { operator: string; admin: string }) => apiPut('/auth/reg-codes', b),
-    onSuccess: () => {
-      setEdit(null);
-      qc.invalidateQueries({ queryKey: ['reg-codes'] });
-    },
-  });
-
-  return (
-    <div className="card mb-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="text-sm">
-          <span className="font-semibold text-slate-700">Коды регистрации</span>
-          <span className="ml-3 text-slate-500">
-            оператор: <b>{data?.operator || '—'}</b> · администратор: <b>{data?.admin || '—'}</b>
-          </span>
-        </div>
-        {!edit && (
-          <button className="btn-ghost" onClick={() => setEdit({ operator: data?.operator ?? '', admin: data?.admin ?? '' })}>
-            Изменить коды
-          </button>
-        )}
-      </div>
-      {edit && (
-        <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
-          <div>
-            <label className="label">Код для операторов</label>
-            <input className="input w-48" value={edit.operator} onChange={(e) => setEdit({ ...edit, operator: e.target.value })} />
-          </div>
-          <div>
-            <label className="label">Код для администраторов</label>
-            <input className="input w-48" value={edit.admin} onChange={(e) => setEdit({ ...edit, admin: e.target.value })} />
-          </div>
-          <button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate(edit)}>
-            Сохранить
-          </button>
-          <button className="btn-ghost" onClick={() => setEdit(null)}>
-            Отмена
-          </button>
-        </div>
-      )}
-      <div className="mt-2 text-xs text-slate-400">
-        Кто знает код — тот регистрируется с соответствующей ролью. Держите коды в секрете и периодически меняйте.
-      </div>
-    </div>
-  );
-}
-
 function UsersTab() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: () => apiGet<{ items: User[] }>('/users') });
@@ -96,7 +40,6 @@ function UsersTab() {
 
   return (
     <div>
-      <RegCodes />
       <div className="mb-3 flex justify-end">
         <button
           className="btn-primary"
@@ -215,7 +158,7 @@ function UserForm({ editing, onDone, onSaved }: { editing: User | null; onDone: 
       </div>
       <div>
         <label className="label">{editing ? 'Новый пароль (если менять)' : 'Пароль'}</label>
-        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="минимум 6 символов" />
+        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="мин. 8 символов, буквы и цифры" />
       </div>
       {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       <div className="flex justify-end gap-2">

@@ -16,7 +16,6 @@ import {
   CITIES,
   MANAGERS,
   KPI_DEFAULTS,
-  REG_CODE_DEFAULTS,
 } from '../constants.js';
 
 // ------- утилиты случайных значений (сид, Math.random допустим) -------
@@ -128,18 +127,10 @@ async function main() {
     await prisma.payment.updateMany({ where: { terminal: oldV }, data: { terminal: newV } });
   }
 
-  // 1c) Настройки по умолчанию. Ставки KPI — всегда. Коды регистрации: в production
-  //     НЕ ставим публичные дефолты (иначе любой зарегистрируется по коду из репозитория) —
-  //     берём из env или оставляем пустыми (регистрация закрыта, пока админ не задаст коды).
+  // 1c) Настройки по умолчанию. Ставки KPI — всегда. (Коды регистрации упразднены:
+  //     публичная саморегистрация закрыта, пользователей заводит админ.)
   const isProd = process.env.NODE_ENV === 'production';
-  const settingDefaults: Record<string, string> = { ...KPI_DEFAULTS };
-  if (isProd) {
-    settingDefaults.reg_code_operator = process.env.REG_CODE_OPERATOR ?? '';
-    settingDefaults.reg_code_admin = process.env.REG_CODE_ADMIN ?? '';
-  } else {
-    Object.assign(settingDefaults, REG_CODE_DEFAULTS);
-  }
-  for (const [key, value] of Object.entries(settingDefaults)) {
+  for (const [key, value] of Object.entries(KPI_DEFAULTS)) {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
   }
 

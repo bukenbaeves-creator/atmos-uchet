@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { ApiError } from '../api/client';
 
 export function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
-  const [loginValue, setLoginValue] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [loginValue, setLoginValue] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -53,15 +53,6 @@ export function Login() {
         <button type="submit" className="btn-primary mt-5 w-full" disabled={busy}>
           {busy ? 'Вход…' : 'Войти'}
         </button>
-        <div className="mt-4 text-center text-sm text-slate-500">
-          Нет аккаунта?{' '}
-          <Link to="/register" className="font-medium text-brand-600 hover:underline">
-            Зарегистрироваться
-          </Link>
-        </div>
-        <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-          Демо-доступы: <b>admin / admin123</b> · <b>operator / operator123</b>
-        </div>
       </form>
     </div>
   );
