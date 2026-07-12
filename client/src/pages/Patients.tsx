@@ -16,6 +16,7 @@ interface Patient {
   phone: string;
   city: string | null;
   birthDate: string | null;
+  services?: string[];
   createdBy?: number | null;
   createdAt?: string;
 }
@@ -38,6 +39,7 @@ export function Patients() {
     { header: 'Телефон', cell: (p) => p.phone },
     { header: 'Город', cell: (p) => p.city ?? '—' },
     { header: 'Дата рождения', cell: (p) => formatDate(p.birthDate) },
+    { header: 'Услуга', cell: (p) => (p.services && p.services.length ? p.services.join(', ') : '—') },
   ];
 
   return (
