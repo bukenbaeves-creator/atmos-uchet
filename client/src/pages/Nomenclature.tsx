@@ -27,6 +27,7 @@ export function Nomenclature() {
   const [editing, setEditing] = useState<Nom | null>(null);
   const [merging, setMerging] = useState<Nom | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkConfirming, setBulkConfirming] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
 
@@ -51,13 +52,14 @@ export function Nomenclature() {
   const allChecked = items.length > 0 && items.every((n) => selected.has(n.id));
   const toggleAll = () => setSelected(allChecked ? new Set() : new Set(items.map((n) => n.id)));
 
-  const confirmSelected = async () => {
+  const confirmSelected = async (attrs?: Record<string, unknown>) => {
     if (selected.size === 0) return;
     setBulkError(null);
     setBulkBusy(true);
     try {
-      await apiPatch<{ confirmed: number }>('/nomenclature/confirm-bulk', { ids: [...selected] });
+      await apiPatch<{ confirmed: number }>('/nomenclature/confirm-bulk', { ids: [...selected], attrs });
       setSelected(new Set());
+      setBulkConfirming(false);
       qc.invalidateQueries({ queryKey: ['nomenclature'] });
       qc.invalidateQueries({ queryKey: ['stock'] });
     } catch (err) {
@@ -144,14 +146,16 @@ export function Nomenclature() {
               <span className="text-slate-500">Выбрано: {selected.size}</span>
               <button
                 className="btn-primary ml-auto px-3 py-1.5 text-xs"
-                disabled={bulkBusy || selected.size === 0}
-                onClick={confirmSelected}
+                disabled={selected.size === 0}
+                onClick={() => {
+                  setBulkError(null);
+                  setBulkConfirming(true);
+                }}
               >
-                {bulkBusy ? 'Подтверждение…' : `Подтвердить выбранные${selected.size ? ` (${selected.size})` : ''}`}
+                Подтвердить выбранные{selected.size ? ` (${selected.size})` : ''}
               </button>
             </div>
           )}
-          {bulkError && <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{bulkError}</div>}
           <Table columns={columns} rows={data.items} />
         </>
       )}
@@ -196,7 +200,117 @@ export function Nomenclature() {
           />
         )}
       </Modal>
+
+      <Modal open={bulkConfirming} onClose={() => setBulkConfirming(false)} title={`Подтвердить позиции: ${selected.size}`}>
+        <BulkConfirmForm count={selected.size} busy={bulkBusy} error={bulkError} onConfirm={confirmSelected} onCancel={() => setBulkConfirming(false)} />
+      </Modal>
     </div>
+  );
+}
+
+// Форма массового подтверждения: общие детали применяются ко всем выбранным.
+// Пустые поля (и «— не менять —») не трогаются — их можно уточнить позже поштучно.
+function BulkConfirmForm({
+  count,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  count: number;
+  busy: boolean;
+  error: string | null;
+  onConfirm: (attrs?: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  const [type, setType] = useState('');
+  const [unitMeasure, setUnitMeasure] = useState('');
+  const [unitWriteoff, setUnitWriteoff] = useState('');
+  const [packFactor, setPackFactor] = useState('');
+  const [minStock, setMinStock] = useState('');
+  const [isExpiryTracked, setIsExpiryTracked] = useState('');
+  const [isSpecial, setIsSpecial] = useState('');
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const attrs: Record<string, unknown> = {};
+    if (type) attrs.type = type;
+    if (unitMeasure.trim()) attrs.unitMeasure = unitMeasure.trim();
+    if (unitWriteoff.trim()) attrs.unitWriteoff = unitWriteoff.trim();
+    if (packFactor !== '') attrs.packFactor = Number(packFactor);
+    if (minStock !== '') attrs.minStock = Number(minStock);
+    if (isExpiryTracked) attrs.isExpiryTracked = isExpiryTracked === 'yes';
+    if (isSpecial) attrs.isSpecial = isSpecial === 'yes';
+    onConfirm(Object.keys(attrs).length ? attrs : undefined);
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <p className="text-sm text-slate-500">
+        Значения применятся ко <b>всем {count}</b> выбранным позициям. Пустые поля не меняются — отдельную позицию потом
+        можно поправить кнопкой «Изменить».
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="label">Тип</label>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">— не менять —</option>
+            <option value="consumable">Расходник</option>
+            <option value="drug">Препарат</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">
+            Единица измерения<Hint text="Как позиция измеряется физически (мл, мг, шт)." />
+          </label>
+          <input className="input" value={unitMeasure} onChange={(e) => setUnitMeasure(e.target.value)} placeholder="не менять" />
+        </div>
+        <div>
+          <label className="label">
+            Единица списания<Hint text="В чём медсестра списывает расход (обычно шт или мл)." />
+          </label>
+          <input className="input" value={unitWriteoff} onChange={(e) => setUnitWriteoff(e.target.value)} placeholder="не менять" />
+        </div>
+        <div>
+          <label className="label">
+            Коэффициент упаковки<Hint text="Сколько единиц списания в одной единице прихода. Одинаково (шт=шт) → 1." />
+          </label>
+          <input type="number" min={0} step="any" className="input" value={packFactor} onChange={(e) => setPackFactor(e.target.value)} placeholder="не менять" />
+        </div>
+        <div>
+          <label className="label">
+            Минимальный остаток<Hint text="Порог дозакупа: ниже него позиция подсветится и попадёт в список к закупу." />
+          </label>
+          <input type="number" min={0} step="any" className="input" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="не менять" />
+        </div>
+        <div>
+          <label className="label">Учитывать срок годности (FEFO)</label>
+          <select className="input" value={isExpiryTracked} onChange={(e) => setIsExpiryTracked(e.target.value)}>
+            <option value="">— не менять —</option>
+            <option value="yes">Да</option>
+            <option value="no">Нет</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Контролируемый препарат</label>
+          <select className="input" value={isSpecial} onChange={(e) => setIsSpecial(e.target.value)}>
+            <option value="">— не менять —</option>
+            <option value="yes">Да</option>
+            <option value="no">Нет</option>
+          </select>
+        </div>
+      </div>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Отмена
+        </button>
+        <button type="submit" className="btn-primary" disabled={busy}>
+          {busy ? 'Подтверждение…' : `Подтвердить (${count})`}
+        </button>
+      </div>
+    </form>
   );
 }
 

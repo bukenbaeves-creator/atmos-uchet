@@ -77,17 +77,21 @@ router.patch(
   }),
 );
 
-// Массовое подтверждение (admin): переводит выбранные позиции из draft в active
-// «как есть», без изменения атрибутов (их можно уточнить позже поштучно). Уже
+// Массовое подтверждение (admin): переводит выбранные позиции из draft в active.
+// Можно передать общие атрибуты (attrs) — они применятся сразу ко всем выбранным
+// (кроме наименования — оно у каждой позиции своё). Переданы только те поля,
+// которые администратор реально указал; остальное у позиций не меняется. Уже
 // подтверждённые/несуществующие среди выбранных просто игнорируются.
+const bulkAttrsSchema = attrsSchema.omit({ nameDisplay: true });
 const bulkSchema = z.object({
   ids: z.array(z.coerce.number().int().positive()).min(1, 'Не выбрано ни одной позиции').max(1000),
+  attrs: bulkAttrsSchema.optional(),
 });
 router.patch(
   '/confirm-bulk',
   requireAdmin,
   asyncHandler(async (req, res) => {
-    const { ids } = bulkSchema.parse(req.body);
+    const { ids, attrs } = bulkSchema.parse(req.body);
     const drafts = await prisma.nomenclature.findMany({
       where: { id: { in: ids }, status: 'draft', deletedAt: null },
     });
@@ -97,7 +101,7 @@ router.patch(
       for (const n of drafts) {
         const updated = await tx.nomenclature.update({
           where: { id: n.id },
-          data: { status: 'active', confirmedBy: req.user!.id, confirmedAt: now, updatedBy: req.user!.id },
+          data: { ...(attrs ?? {}), status: 'active', confirmedBy: req.user!.id, confirmedAt: now, updatedBy: req.user!.id },
         });
         await writeAudit(req, { action: 'update', entity: 'nomenclature', entityId: n.id, before: n, after: updated }, tx);
       }
