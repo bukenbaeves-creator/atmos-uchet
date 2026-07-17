@@ -35,6 +35,13 @@ enum NomenclatureStatus {
 enum ReceiptSource {
   manual
   import
+  revision // служебный приход: оприходование излишка по ревизии
+}
+
+// Статус ревизии склада: draft — вводятся факт. остатки; applied — корректировки проведены
+enum RevisionStatus {
+  draft
+  applied
 }
 
 // Направление денежной операции: платёж (приход) или возврат (расход пациенту)
@@ -234,9 +241,10 @@ model Nomenclature {
   confirmedAt     DateTime?
   mergedIntoId    Int? // если позиция слита с другой — id основной позиции
 
-  aliases   NomenclatureAlias[]
-  batches   Batch[]
-  writeoffs ExpenseWriteoff[]
+  aliases       NomenclatureAlias[]
+  batches       Batch[]
+  writeoffs     ExpenseWriteoff[]
+  revisionItems RevisionItem[]
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -353,4 +361,41 @@ model WriteoffBatchAllocation {
 
   @@index([writeoffId])
   @@index([batchId])
+}
+
+// Ревизия (инвентаризация) склада: сверка фактических остатков с учётными и
+// корректировка. Черновик заполняет медсестра/админ; применяет только админ.
+model Revision {
+  id        Int            @id @default(autoincrement())
+  date      DateTime       @default(now())
+  note      String?
+  status    RevisionStatus @default(draft)
+  items     RevisionItem[]
+  createdBy Int?
+  createdAt DateTime       @default(now())
+  updatedBy Int?
+  updatedAt DateTime       @updatedAt
+  appliedBy Int?
+  appliedAt DateTime?
+  deletedAt DateTime?
+  deletedBy Int?
+}
+
+// Позиция ревизии: один материал. systemQty — учётный остаток (снимок), countedQty —
+// фактический (null = не считали, не трогаем при применении), surplusPrice — цена
+// излишка (вручную), costDelta — денежный эффект корректировки (заполняется при применении).
+model RevisionItem {
+  id             Int          @id @default(autoincrement())
+  revision       Revision     @relation(fields: [revisionId], references: [id])
+  revisionId     Int
+  nomenclature   Nomenclature @relation(fields: [nomenclatureId], references: [id])
+  nomenclatureId Int
+  systemQty      Decimal      @db.Decimal(14, 3)
+  countedQty     Decimal?     @db.Decimal(14, 3)
+  surplusPrice   Decimal?     @db.Decimal(14, 2) // цена излишка (только админ)
+  costDelta      Decimal?     @db.Decimal(14, 2) // эффект: <0 недостача, >0 излишек (только админ)
+  note           String?
+
+  @@unique([revisionId, nomenclatureId])
+  @@index([revisionId])
 }

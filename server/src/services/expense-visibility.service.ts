@@ -4,7 +4,7 @@
 // цену можно было бы увидеть через инструменты разработчика браузера.
 
 // Поля, которые нужно убрать для не-админов (на любом уровне вложенности).
-const COST_FIELDS = new Set(['purchasePrice', 'costTotal', 'cost', 'sum', 'totalCost', 'avgPrice']);
+const COST_FIELDS = new Set(['purchasePrice', 'costTotal', 'cost', 'sum', 'totalCost', 'avgPrice', 'surplusPrice', 'costDelta']);
 
 type Role = string | undefined;
 
