@@ -118,4 +118,78 @@ router.post(
   }),
 );
 
+// Массовое списание: несколько позиций на ОДНОГО пациента одной карточкой.
+// Общие: пациент, категория, дата (и операция); по строкам — позиция + количество.
+// Всё в одной транзакции: либо создаются все списания, либо ни одного.
+const bulkSchema = z.object({
+  patient: patientInputSchema,
+  operationId: z.coerce.number().int().positive().optional().nullable(),
+  categoryId: z.coerce.number().int().positive({ message: 'Выберите категорию расхода' }),
+  date: requiredDate('Необходимо указать дату'),
+  lines: z
+    .array(
+      z.object({
+        nomenclatureId: z.coerce.number().int().positive({ message: 'Выберите позицию' }),
+        qty: z.coerce.number({ invalid_type_error: 'Количество должно быть числом' }).positive('Количество должно быть больше нуля').max(1_000_000),
+      }),
+    )
+    .min(1, 'Добавьте хотя бы одну позицию'),
+});
+
+router.post(
+  '/bulk',
+  asyncHandler(async (req, res) => {
+    const data = bulkSchema.parse(req.body);
+
+    const created = await prisma.$transaction(async (tx) => {
+      const cat = await tx.expenseCategory.findFirst({ where: { id: data.categoryId, isActive: true } });
+      if (!cat) throw badRequest('Категория расхода не найдена');
+
+      const patientId = await resolvePatient(data.patient, req, tx);
+
+      if (data.operationId) {
+        const op = await tx.operation.findFirst({ where: { id: data.operationId, deletedAt: null } });
+        if (!op) throw badRequest('Операция не найдена');
+        if (op.patientId !== patientId) throw badRequest('Операция принадлежит другому пациенту');
+      }
+
+      const rows = [];
+      for (const line of data.lines) {
+        const nom = await tx.nomenclature.findFirst({ where: { id: line.nomenclatureId, deletedAt: null } });
+        if (!nom) throw badRequest('Позиция номенклатуры не найдена');
+        if (nom.status !== 'active') throw badRequest(`Позиция «${nom.nameDisplay}» ещё не подтверждена администратором`);
+
+        const alloc = await allocateWriteoff(line.nomenclatureId, new Prisma.Decimal(line.qty), tx);
+        const writeoff = await tx.expenseWriteoff.create({
+          data: {
+            patientId,
+            operationId: data.operationId ?? null,
+            nomenclatureId: line.nomenclatureId,
+            categoryId: data.categoryId,
+            qty: line.qty,
+            costTotal: alloc.costTotal,
+            isShortage: alloc.isShortage,
+            date: data.date,
+            createdBy: req.user!.id,
+            updatedBy: req.user!.id,
+            allocations: { create: alloc.allocations.map((a) => ({ batchId: a.batchId, qty: a.qty, cost: a.cost })) },
+          },
+          include: {
+            patient: { select: { id: true, fio: true } },
+            nomenclature: { select: { nameDisplay: true, unitWriteoff: true } },
+            category: { select: { name: true } },
+          },
+        });
+        await writeAudit(req, { action: 'create', entity: 'writeoff', entityId: writeoff.id, after: writeoff }, tx);
+        rows.push(writeoff);
+      }
+      return rows;
+    });
+
+    // Позиции, списанные при нехватке остатка (в минус) — показываем, но не блокируем.
+    const shortages = created.filter((w) => w.isShortage).map((w) => w.nomenclature?.nameDisplay ?? '—');
+    res.status(201).json({ created: created.length, shortages, items: stripCost(serialize(created), req.user!.role) });
+  }),
+);
+
 export default router;

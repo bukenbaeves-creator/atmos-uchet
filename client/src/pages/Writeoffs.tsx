@@ -95,14 +95,20 @@ export function Writeoffs() {
   );
 }
 
+interface WLine {
+  uid: number;
+  nomenclatureId: string;
+  qty: string;
+}
+
 function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
   const [patient, setPatient] = useState<PatientValue>({});
-  const [nomenclatureId, setNomenclatureId] = useState('');
   const [categoryId, setCategoryId] = useState('');
-  const [qty, setQty] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [lines, setLines] = useState<WLine[]>([{ uid: 1, nomenclatureId: '', qty: '' }]);
+  const [nextUid, setNextUid] = useState(2);
   const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
+  const [shortages, setShortages] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Только подтверждённые позиции (active) — draft списывать нельзя
@@ -111,31 +117,38 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
     queryFn: () => apiGet<{ items: CatOption[] }>('/expense-categories'),
   });
 
+  const setLine = (uid: number, patch: Partial<WLine>) =>
+    setLines((ls) => ls.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
+  const addLine = () => {
+    setLines((ls) => [...ls, { uid: nextUid, nomenclatureId: '', qty: '' }]);
+    setNextUid((n) => n + 1);
+  };
+  const removeLine = (uid: number) => setLines((ls) => (ls.length > 1 ? ls.filter((l) => l.uid !== uid) : ls));
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setWarning(null);
-    if (!nomenclatureId) {
-      setError('Выберите позицию номенклатуры');
+    const filled = lines.filter((l) => l.nomenclatureId && l.qty);
+    if (!filled.length) {
+      setError('Добавьте хотя бы одну позицию с количеством');
       return;
     }
     setBusy(true);
     try {
-      const res = await apiPost<{ warning?: string }>('/writeoffs', {
+      const res = await apiPost<{ created: number; shortages: string[] }>('/writeoffs/bulk', {
         patient: {
           fio: (patient.fio ?? '').trim(),
           phone: (patient.phone ?? '').trim(),
           city: patient.city || '',
           birthDate: patient.birthDate || null,
         },
-        nomenclatureId: Number(nomenclatureId),
         categoryId: Number(categoryId),
-        qty: Number(qty),
         date,
+        lines: filled.map((l) => ({ nomenclatureId: Number(l.nomenclatureId), qty: Number(l.qty) })),
       });
       onSaved();
-      if (res.warning) {
-        setWarning(res.warning); // нехватка остатка — показываем, но списание прошло
+      if (res.shortages && res.shortages.length) {
+        setShortages(res.shortages); // часть позиций списана в минус — показываем, но списание прошло
       } else {
         onDone();
       }
@@ -146,26 +159,28 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
     }
   };
 
+  if (shortages) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Списание проведено.</div>
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Списано при нехватке остатка (в минус): <b>{shortages.join(', ')}</b>. Требуется корректировка прихода
+          (дозавод партии) или ревизия.
+        </div>
+        <div className="flex justify-end">
+          <button type="button" className="btn-primary" onClick={onDone}>
+            Понятно, закрыть
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={submit} className="space-y-4">
       <PatientBlock value={patient} onChange={setPatient} />
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <label className="label">Позиция (номенклатура) *</label>
-          <NomenclaturePicker value={Number(nomenclatureId) || null} onChange={(id) => setNomenclatureId(id ? String(id) : '')} />
-        </div>
-        <div>
-          <label className="label">Количество *</label>
-          <input
-            type="number"
-            className="input"
-            required
-            min={0}
-            step="any"
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-          />
-        </div>
         <div>
           <label className="label">Категория расхода *</label>
           <select className="input" required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
@@ -191,28 +206,57 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
         </div>
       </div>
 
-      {warning && (
-        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {warning}
-          <div className="mt-2">
-            <button type="button" className="btn-ghost" onClick={onDone}>
-              Понятно, закрыть
-            </button>
+      <div className="space-y-2">
+        <div className="text-sm font-medium text-slate-600">Позиции к списанию</div>
+        {lines.map((l) => (
+          <div key={l.uid} className="grid grid-cols-12 items-start gap-2 rounded-lg border border-slate-200 p-2">
+            <div className="col-span-12 sm:col-span-8">
+              <label className="label">Позиция (номенклатура) *</label>
+              <NomenclaturePicker
+                value={Number(l.nomenclatureId) || null}
+                onChange={(id) => setLine(l.uid, { nomenclatureId: id ? String(id) : '' })}
+              />
+            </div>
+            <div className="col-span-8 sm:col-span-3">
+              <label className="label">Количество *</label>
+              <input
+                type="number"
+                className="input"
+                min={0}
+                step="any"
+                value={l.qty}
+                onChange={(e) => setLine(l.uid, { qty: e.target.value })}
+              />
+            </div>
+            <div className="col-span-4 sm:col-span-1">
+              <label className="label">&nbsp;</label>
+              <button
+                type="button"
+                className="btn-ghost px-2 py-2 text-xs text-rose-600 disabled:opacity-40"
+                disabled={lines.length === 1}
+                onClick={() => removeLine(l.uid)}
+                title="Удалить строку"
+              >
+                ✕
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        ))}
+        <button type="button" className="btn-ghost text-sm" onClick={addLine}>
+          + Добавить позицию
+        </button>
+      </div>
+
       {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
 
-      {!warning && (
-        <div className="flex justify-end gap-2">
-          <button type="button" className="btn-ghost" onClick={onDone}>
-            Отмена
-          </button>
-          <button type="submit" className="btn-primary" disabled={busy}>
-            {busy ? 'Сохранение…' : 'Списать'}
-          </button>
-        </div>
-      )}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onDone}>
+          Отмена
+        </button>
+        <button type="submit" className="btn-primary" disabled={busy}>
+          {busy ? 'Сохранение…' : `Списать${lines.filter((l) => l.nomenclatureId && l.qty).length ? ` (${lines.filter((l) => l.nomenclatureId && l.qty).length})` : ''}`}
+        </button>
+      </div>
     </form>
   );
 }
