@@ -77,6 +77,35 @@ router.patch(
   }),
 );
 
+// Массовое подтверждение (admin): переводит выбранные позиции из draft в active
+// «как есть», без изменения атрибутов (их можно уточнить позже поштучно). Уже
+// подтверждённые/несуществующие среди выбранных просто игнорируются.
+const bulkSchema = z.object({
+  ids: z.array(z.coerce.number().int().positive()).min(1, 'Не выбрано ни одной позиции').max(1000),
+});
+router.patch(
+  '/confirm-bulk',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { ids } = bulkSchema.parse(req.body);
+    const drafts = await prisma.nomenclature.findMany({
+      where: { id: { in: ids }, status: 'draft', deletedAt: null },
+    });
+    if (!drafts.length) throw badRequest('Среди выбранных нет позиций на подтверждении');
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      for (const n of drafts) {
+        const updated = await tx.nomenclature.update({
+          where: { id: n.id },
+          data: { status: 'active', confirmedBy: req.user!.id, confirmedAt: now, updatedBy: req.user!.id },
+        });
+        await writeAudit(req, { action: 'update', entity: 'nomenclature', entityId: n.id, before: n, after: updated }, tx);
+      }
+    });
+    res.json({ confirmed: drafts.length });
+  }),
+);
+
 // Слияние дубля номенклатуры в основную позицию (admin). Переносит партии,
 // списания и алиасы, дубль помечается удалённым и хранит ссылку mergedIntoId.
 router.post(

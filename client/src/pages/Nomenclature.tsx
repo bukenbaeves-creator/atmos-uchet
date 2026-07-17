@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPatch, apiPost, ApiError } from '../api/client';
+import { apiGet, apiPatch, apiPost, apiPut, ApiError } from '../api/client';
 import { PageHeader, Spinner, EmptyState, Modal, Badge, Hint } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { useAuth } from '../lib/auth';
@@ -24,14 +24,66 @@ export function Nomenclature() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'active' | 'draft'>('active');
   const [confirming, setConfirming] = useState<Nom | null>(null);
+  const [editing, setEditing] = useState<Nom | null>(null);
   const [merging, setMerging] = useState<Nom | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['nomenclature', { status: tab }],
     queryFn: () => apiGet<{ items: Nom[] }>(`/nomenclature?status=${tab}`),
   });
 
+  const changeTab = (t: 'active' | 'draft') => {
+    setTab(t);
+    setSelected(new Set());
+    setBulkError(null);
+  };
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const items = data?.items ?? [];
+  const allChecked = items.length > 0 && items.every((n) => selected.has(n.id));
+  const toggleAll = () => setSelected(allChecked ? new Set() : new Set(items.map((n) => n.id)));
+
+  const confirmSelected = async () => {
+    if (selected.size === 0) return;
+    setBulkError(null);
+    setBulkBusy(true);
+    try {
+      await apiPatch<{ confirmed: number }>('/nomenclature/confirm-bulk', { ids: [...selected] });
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['nomenclature'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
+    } catch (err) {
+      setBulkError(err instanceof ApiError ? err.message : 'Не удалось подтвердить выбранные');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const showSelect = isAdmin && tab === 'draft';
   const columns: Column<Nom>[] = [
+    ...(showSelect
+      ? [
+          {
+            header: '',
+            cell: (n: Nom) => (
+              <input
+                type="checkbox"
+                checked={selected.has(n.id)}
+                onChange={() => toggle(n.id)}
+                aria-label={`Выбрать ${n.nameDisplay}`}
+              />
+            ),
+          } as Column<Nom>,
+        ]
+      : []),
     { header: 'Наименование', cell: (n) => <span className="font-medium">{n.nameDisplay}</span> },
     { header: 'Тип', cell: (n) => (n.type === 'drug' ? 'Препарат' : 'Расходник') },
     { header: 'Ед. списания', cell: (n) => n.unitWriteoff ?? '—' },
@@ -43,9 +95,13 @@ export function Nomenclature() {
       cell: (n) =>
         isAdmin ? (
           <div className="flex justify-end gap-1">
-            {n.status === 'draft' && (
+            {n.status === 'draft' ? (
               <button className="btn-primary px-2 py-1 text-xs" onClick={() => setConfirming(n)}>
                 Подтвердить
+              </button>
+            ) : (
+              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(n)}>
+                Изменить
               </button>
             )}
             <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setMerging(n)}>
@@ -63,10 +119,10 @@ export function Nomenclature() {
         subtitle="Справочник материалов. Новые позиции из приходов попадают на подтверждение администратору."
       />
       <div className="mb-3 flex gap-2">
-        <button className={tab === 'active' ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab('active')}>
+        <button className={tab === 'active' ? 'btn-primary' : 'btn-ghost'} onClick={() => changeTab('active')}>
           Активные
         </button>
-        <button className={tab === 'draft' ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab('draft')}>
+        <button className={tab === 'draft' ? 'btn-primary' : 'btn-ghost'} onClick={() => changeTab('draft')}>
           На подтверждении{data && tab === 'draft' ? ` (${data.items.length})` : ''}
         </button>
       </div>
@@ -78,14 +134,48 @@ export function Nomenclature() {
       ) : !data || data.items.length === 0 ? (
         <EmptyState>{tab === 'draft' ? 'Нет позиций на подтверждении' : 'Активных позиций нет'}</EmptyState>
       ) : (
-        <Table columns={columns} rows={data.items} />
+        <>
+          {showSelect && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+                Выбрать все
+              </label>
+              <span className="text-slate-500">Выбрано: {selected.size}</span>
+              <button
+                className="btn-primary ml-auto px-3 py-1.5 text-xs"
+                disabled={bulkBusy || selected.size === 0}
+                onClick={confirmSelected}
+              >
+                {bulkBusy ? 'Подтверждение…' : `Подтвердить выбранные${selected.size ? ` (${selected.size})` : ''}`}
+              </button>
+            </div>
+          )}
+          {bulkError && <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{bulkError}</div>}
+          <Table columns={columns} rows={data.items} />
+        </>
       )}
 
       <Modal open={confirming != null} onClose={() => setConfirming(null)} title={`Подтверждение · ${confirming?.nameDisplay ?? ''}`}>
         {confirming && (
-          <ConfirmForm
+          <AttrsForm
             nom={confirming}
+            mode="confirm"
             onDone={() => setConfirming(null)}
+            onSaved={() => {
+              qc.invalidateQueries({ queryKey: ['nomenclature'] });
+              qc.invalidateQueries({ queryKey: ['stock'] });
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal open={editing != null} onClose={() => setEditing(null)} title={`Изменить · ${editing?.nameDisplay ?? ''}`}>
+        {editing && (
+          <AttrsForm
+            nom={editing}
+            mode="edit"
+            onDone={() => setEditing(null)}
             onSaved={() => {
               qc.invalidateQueries({ queryKey: ['nomenclature'] });
               qc.invalidateQueries({ queryKey: ['stock'] });
@@ -190,7 +280,10 @@ function MergeForm({ dup, onDone, onSaved }: { dup: Nom; onDone: () => void; onS
   );
 }
 
-function ConfirmForm({ nom, onDone, onSaved }: { nom: Nom; onDone: () => void; onSaved: () => void }) {
+// Форма атрибутов позиции. mode='confirm' — подтверждает draft (PATCH /confirm),
+// mode='edit' — правит уже подтверждённую позицию (PUT /:id). Поля одинаковые.
+function AttrsForm({ nom, mode, onDone, onSaved }: { nom: Nom; mode: 'confirm' | 'edit'; onDone: () => void; onSaved: () => void }) {
+  const [nameDisplay, setNameDisplay] = useState(nom.nameDisplay);
   const [type, setType] = useState<'drug' | 'consumable'>(nom.type);
   const [unitWriteoff, setUnitWriteoff] = useState(nom.unitWriteoff ?? '');
   const [unitMeasure, setUnitMeasure] = useState(nom.unitMeasure ?? '');
@@ -203,10 +296,15 @@ function ConfirmForm({ nom, onDone, onSaved }: { nom: Nom; onDone: () => void; o
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!nameDisplay.trim()) {
+      setError('Укажите наименование');
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      await apiPatch(`/nomenclature/${nom.id}/confirm`, {
+      const payload = {
+        nameDisplay: nameDisplay.trim(),
         type,
         unitWriteoff: unitWriteoff || null,
         unitMeasure: unitMeasure || null,
@@ -214,7 +312,9 @@ function ConfirmForm({ nom, onDone, onSaved }: { nom: Nom; onDone: () => void; o
         minStock: Number(minStock) || 0,
         isSpecial,
         isExpiryTracked,
-      });
+      };
+      if (mode === 'confirm') await apiPatch(`/nomenclature/${nom.id}/confirm`, payload);
+      else await apiPut(`/nomenclature/${nom.id}`, payload);
       onSaved();
       onDone();
     } catch (err) {
@@ -226,6 +326,10 @@ function ConfirmForm({ nom, onDone, onSaved }: { nom: Nom; onDone: () => void; o
 
   return (
     <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="sm:col-span-2">
+        <label className="label">Наименование</label>
+        <input className="input" value={nameDisplay} onChange={(e) => setNameDisplay(e.target.value)} />
+      </div>
       <div>
         <label className="label">Тип</label>
         <select className="input" value={type} onChange={(e) => setType(e.target.value as 'drug' | 'consumable')}>
@@ -276,7 +380,7 @@ function ConfirmForm({ nom, onDone, onSaved }: { nom: Nom; onDone: () => void; o
           Отмена
         </button>
         <button type="submit" className="btn-primary" disabled={busy}>
-          {busy ? 'Сохранение…' : 'Подтвердить позицию'}
+          {busy ? 'Сохранение…' : mode === 'confirm' ? 'Подтвердить позицию' : 'Сохранить'}
         </button>
       </div>
     </form>
