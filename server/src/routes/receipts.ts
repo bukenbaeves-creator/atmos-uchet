@@ -154,13 +154,18 @@ router.post(
     const supplier = optionalString(200).parse(req.body?.supplier ?? null);
     const override = req.body?.override === 'true' || req.body?.override === '1';
     const allowPartial = req.body?.allowPartial === 'true' || req.body?.allowPartial === '1';
+    const confirmExpired = req.body?.confirmExpired === 'true' || req.body?.confirmExpired === '1';
 
     const { rows, errors, warnings, header } = await parseReceiptRows(req.file.buffer, req.file.originalname);
 
     // Нет ни одной корректной строки, либо есть ошибки и явно не разрешена частичная
     // загрузка → не грузим НИЧЕГО. Возвращаем отчёт, чтобы исправить файл и повторить.
     if (!rows.length || (errors.length > 0 && !allowPartial)) {
-      return res.json({ imported: 0, valid: rows.length, blocked: true, errors, warnings, header, receiptId: null });
+      return res.json({ imported: 0, valid: rows.length, blocked: true, blockReason: 'errors', errors, warnings, header, receiptId: null });
+    }
+    // Есть просроченные позиции — не грузим на склад, пока не подтвердят явно.
+    if (warnings.length > 0 && !confirmExpired) {
+      return res.json({ imported: 0, valid: rows.length, blocked: true, blockReason: 'expired', errors, warnings, header, receiptId: null });
     }
 
     const importHash = createHash('sha256').update(req.file.buffer).digest('hex');
@@ -216,7 +221,7 @@ router.post(
       return receipt.id;
     });
 
-    res.json({ imported: rows.length, valid: rows.length, blocked: false, errors, warnings, header, receiptId });
+    res.json({ imported: rows.length, valid: rows.length, blocked: false, blockReason: null, errors, warnings, header, receiptId });
   }),
 );
 

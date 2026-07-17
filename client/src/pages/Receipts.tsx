@@ -139,6 +139,7 @@ interface ImportResult {
   imported: number;
   valid: number;
   blocked: boolean;
+  blockReason?: 'errors' | 'expired' | null;
   errors: ImportIssue[];
   warnings: ImportIssue[];
   header: string[];
@@ -186,10 +187,12 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
   const [result, setResult] = useState<ImportResult | null>(null);
   const [conflict, setConflict] = useState(false);
   const [pendingPartial, setPendingPartial] = useState(false);
+  const [pendingExpired, setPendingExpired] = useState(false);
+  const [expiredAck, setExpiredAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const upload = async (override: boolean, allowPartial: boolean) => {
+  const upload = async (override: boolean, allowPartial: boolean, confirmExpired: boolean) => {
     if (!file) {
       setError('Выберите файл');
       return;
@@ -197,6 +200,7 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
     setError(null);
     setBusy(true);
     setPendingPartial(allowPartial);
+    setPendingExpired(confirmExpired);
     try {
       const fd = new FormData();
       fd.append('file', file);
@@ -204,6 +208,7 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
       if (supplier) fd.append('supplier', supplier);
       if (override) fd.append('override', 'true');
       if (allowPartial) fd.append('allowPartial', 'true');
+      if (confirmExpired) fd.append('confirmExpired', 'true');
       const res = await apiUpload<ImportResult>('/receipts/import', fd);
       setResult(res);
       setConflict(false);
@@ -225,10 +230,43 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
     setFile(null);
     setError(null);
     setConflict(false);
+    setExpiredAck(false);
   };
 
   if (result) {
-    const { imported, valid, blocked, errors, warnings } = result;
+    const { imported, valid, blocked, blockReason, errors, warnings } = result;
+
+    // Заблокировано из-за просрочки — грузим только после явного подтверждения.
+    if (blocked && blockReason === 'expired') {
+      return (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <b>Обнаружены просроченные позиции ({warnings.length}).</b> Они ещё <b>не загружены</b> на склад. Проверьте
+            список и подтвердите, если действительно нужно их оприходовать.
+          </div>
+          <IssueList items={warnings} tone="amber" />
+          {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={expiredAck} onChange={(e) => setExpiredAck(e.target.checked)} className="mt-0.5" />
+            Понимаю, что {warnings.length} позиц. просрочены, и всё равно хочу их загрузить.
+          </label>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={restart}>
+              Отмена
+            </button>
+            <button
+              type="button"
+              className={conflict ? 'btn-danger' : 'btn-primary'}
+              disabled={busy || !expiredAck}
+              onClick={() => upload(conflict, pendingPartial, true)}
+            >
+              {busy ? 'Загрузка…' : `Загрузить (${valid})`}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
         {blocked ? (
@@ -272,11 +310,11 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
               </button>
               {valid > 0 &&
                 (conflict ? (
-                  <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, true)}>
+                  <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, true, pendingExpired)}>
                     {busy ? 'Загрузка…' : 'Всё равно загрузить'}
                   </button>
                 ) : (
-                  <button type="button" className="btn-primary" disabled={busy} onClick={() => upload(false, true)}>
+                  <button type="button" className="btn-primary" disabled={busy} onClick={() => upload(false, true, false)}>
                     {busy ? 'Загрузка…' : `Загрузить только корректные (${valid})`}
                   </button>
                 ))}
@@ -325,11 +363,11 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
           Отмена
         </button>
         {conflict ? (
-          <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, pendingPartial)}>
+          <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, pendingPartial, pendingExpired)}>
             {busy ? 'Загрузка…' : 'Загрузить повторно'}
           </button>
         ) : (
-          <button type="button" className="btn-primary" disabled={busy || !file} onClick={() => upload(false, false)}>
+          <button type="button" className="btn-primary" disabled={busy || !file} onClick={() => upload(false, false, false)}>
             {busy ? 'Загрузка…' : 'Импортировать'}
           </button>
         )}
