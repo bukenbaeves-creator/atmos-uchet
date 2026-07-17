@@ -87,6 +87,7 @@ export function PatientBlock({ value, onChange }: { value: PatientValue; onChang
             ФИО <span className="text-rose-500">*</span>
           </label>
           <input className="input" required value={v.fio ?? ''} onChange={(e) => set('fio', e.target.value)} />
+          <div className="mt-1 text-xs text-slate-400">Желательно указать фамилию и имя пациента.</div>
         </div>
         <div>
           <label className="label">

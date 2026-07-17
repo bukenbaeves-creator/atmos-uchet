@@ -12,6 +12,7 @@ import type { Column } from '../components/Table';
 interface Consultation {
   id: number;
   patient?: { fio: string };
+  dateZapis: string | null;
   dateKons: string | null;
   stage: string | null;
   resultDetails: string | null;
@@ -86,7 +87,8 @@ export function Consultations() {
 
   const columns: Column<Consultation>[] = [
     { header: 'Пациент', cell: (c) => <span className="font-medium">{c.patient?.fio ?? '—'}</span> },
-    { header: 'Дата', cell: (c) => formatDate(c.dateKons) },
+    { header: 'Дата записи', cell: (c) => formatDate(c.dateZapis) },
+    { header: 'Дата консультации', cell: (c) => formatDate(c.dateKons) },
     { header: 'Менеджер', cell: (c) => c.manager ?? '—' },
     { header: 'Врач', cell: (c) => c.doctor ?? '—' },
     { header: 'Интерес', cell: (c) => c.interestOperation ?? '—' },
