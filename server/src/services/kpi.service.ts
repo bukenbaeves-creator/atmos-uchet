@@ -60,9 +60,22 @@ export function periodRange(
   };
 }
 
-// Отчёт KPI по менеджерам за период
+// Отчёт KPI по менеджерам за пресетный период (месяц/квартал/год)
 export async function kpiReport(period: Period, dateStr?: string) {
   const { from, toExclusive, label } = periodRange(period, dateStr);
+  return computeReward(from, toExclusive, label);
+}
+
+// Отчёт KPI по произвольному диапазону дат (общий период страницы KPI).
+export async function kpiReportRange(fromStr: string, toStr: string) {
+  const from = new Date(fromStr + 'T00:00:00.000Z');
+  const toExclusive = new Date(toStr + 'T00:00:00.000Z');
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1); // конечный день включительно
+  return computeReward(from, toExclusive, `${fromStr} — ${toStr}`);
+}
+
+// Общий расчёт вознаграждения по менеджерам за [from, toExclusive).
+async function computeReward(from: Date, toExclusive: Date, label: string) {
   const rates = await getRates();
 
   // Записи удалённых пациентов не учитываем в KPI.
@@ -115,7 +128,6 @@ export async function kpiReport(period: Period, dateStr?: string) {
   );
 
   return {
-    period,
     label,
     from: from.toISOString(),
     to: toExclusive.toISOString(),

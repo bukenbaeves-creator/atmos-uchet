@@ -66,9 +66,25 @@ export const PREPAYMENT_SERVICE = 'Предоплата';
 export const MANAGERS = ['Айгерим', 'Динара', 'Марат', 'Жанна', 'Асель'];
 
 // Ставки KPI по умолчанию (тенге за одну запись). Меняются админом в интерфейсе.
+// Ниже — параметры мини-дашборда качества (тоже настраиваются админом, хранятся в Setting).
 export const KPI_DEFAULTS = {
   kpi_consultation_rate: '3000',
   kpi_operation_rate: '30000',
+  // срок внесения итога после даты консультации, часов (24 ≈ «до конца дня консультации»)
+  kpi_timeliness_hours: '24',
+  // минимальная длина итога (деталей), символов
+  kpi_min_result_len: '40',
+  // окно сравнения итогов на шаблонность (M дней)
+  kpi_template_days: '30',
+  // окно конверсии консультации в операцию (K дней)
+  kpi_conversion_days: '90',
+  // целевые пороги светофора (%): зелёный / жёлтый
+  kpi_target_quality_green: '90',
+  kpi_target_quality_yellow: '70',
+  kpi_target_timeliness_green: '90',
+  kpi_target_timeliness_yellow: '70',
+  kpi_target_conversion_green: '35',
+  kpi_target_conversion_yellow: '25',
 };
 
 // Коды регистрации по умолчанию (админ обязан сменить их в интерфейсе).
