@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiUpload, ApiError, receiptTemplateUrl } from '../api/client';
+import { apiGet, apiPost, apiUpload, apiDelete, ApiError, receiptTemplateUrl } from '../api/client';
 import type { ListResponse } from '../api/hooks';
 import { formatDate, isExpired } from '../lib/format';
 import { PageHeader, Spinner, EmptyState, Modal, Pagination, Hint } from '../components/ui';
@@ -116,36 +116,95 @@ export function Receipts() {
       </Modal>
 
       <Modal open={detail != null} onClose={() => setDetail(null)} wide title={`Приход · ${detail ? formatDate(detail.date) : ''}`}>
-        {detail && <ReceiptDetail receipt={detail} />}
+        {detail && (
+          <ReceiptDetail
+            receipt={detail}
+            onDeleted={() => {
+              refresh();
+              setDetail(null);
+            }}
+          />
+        )}
       </Modal>
     </div>
   );
 }
 
+interface ImportIssue {
+  row: number;
+  reason: string;
+  cells?: string[];
+}
+interface ImportResult {
+  imported: number;
+  valid: number;
+  blocked: boolean;
+  errors: ImportIssue[];
+  warnings: ImportIssue[];
+  header: string[];
+}
+
+// Формирует CSV из ошибочных строк (исходные ячейки + причина) и скачивает файл,
+// чтобы сотрудник исправил его и загрузил заново.
+function downloadErrorRows(res: ImportResult) {
+  const cols = res.header?.length ? res.header : ['Наименование', 'Количество', 'Цена закупа', 'Серия', 'Срок годности', 'Единица'];
+  const esc = (s: unknown) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const lines = [[...cols, 'Причина ошибки'].map(esc).join(';')];
+  for (const e of res.errors) {
+    const cells = cols.map((_, i) => e.cells?.[i] ?? '');
+    lines.push([...cells, e.reason].map(esc).join(';'));
+  }
+  const csv = '﻿' + lines.join('\r\n'); // BOM — чтобы Excel правильно показал кириллицу
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ошибочные-строки.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function IssueList({ items, tone }: { items: ImportIssue[]; tone: 'rose' | 'amber' }) {
+  return (
+    <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 text-sm">
+      {items.map((e, i) => (
+        <div key={i} className="flex gap-3 border-b border-slate-100 px-3 py-1.5 last:border-0">
+          {e.row > 0 && <span className="w-14 shrink-0 text-slate-400">стр. {e.row}</span>}
+          <span className={tone === 'rose' ? 'text-rose-700' : 'text-amber-700'}>{e.reason}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Импорт прихода из Excel: выбор файла, дата/поставщик, отчёт о результате.
+// Правило «стоп при ошибках»: если есть ошибки — по умолчанию не грузим ничего,
+// сотрудник осознанно решает — исправить файл или загрузить только корректные.
 function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [supplier, setSupplier] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<{ imported: number; errors: { row: number; reason: string }[] } | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
   const [conflict, setConflict] = useState(false);
+  const [pendingPartial, setPendingPartial] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const upload = async (override: boolean) => {
+  const upload = async (override: boolean, allowPartial: boolean) => {
     if (!file) {
       setError('Выберите файл');
       return;
     }
     setError(null);
     setBusy(true);
+    setPendingPartial(allowPartial);
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('date', date);
       if (supplier) fd.append('supplier', supplier);
       if (override) fd.append('override', 'true');
-      const res = await apiUpload<{ imported: number; errors: { row: number; reason: string }[] }>('/receipts/import', fd);
+      if (allowPartial) fd.append('allowPartial', 'true');
+      const res = await apiUpload<ImportResult>('/receipts/import', fd);
       setResult(res);
       setConflict(false);
       if (res.imported > 0) onSaved();
@@ -161,29 +220,72 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
     }
   };
 
+  const restart = () => {
+    setResult(null);
+    setFile(null);
+    setError(null);
+    setConflict(false);
+  };
+
   if (result) {
+    const { imported, valid, blocked, errors, warnings } = result;
     return (
       <div className="space-y-3">
-        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Импортировано строк: <b>{result.imported}</b>
-        </div>
-        {result.errors.length > 0 && (
-          <div>
-            <div className="mb-1 text-sm font-medium text-rose-700">Не загружены строки с ошибками:</div>
-            <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 text-sm">
-              {result.errors.map((e, i) => (
-                <div key={i} className="flex gap-3 border-b border-slate-100 px-3 py-1.5 last:border-0">
-                  <span className="w-16 shrink-0 text-slate-400">стр. {e.row}</span>
-                  <span>{e.reason}</span>
-                </div>
-              ))}
-            </div>
+        {blocked ? (
+          <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            <b>Ничего не загружено.</b> В файле {errors.length} строк(и) с ошибками. Чтобы не потерять позиции, исправьте
+            файл и загрузите заново{valid > 0 ? ', либо осознанно загрузите только корректные строки' : ''}.
+          </div>
+        ) : (
+          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            Импортировано строк: <b>{imported}</b>
+            {errors.length > 0 && <> · пропущено с ошибками: <b>{errors.length}</b></>}
           </div>
         )}
-        <div className="flex justify-end">
-          <button type="button" className="btn-primary" onClick={onDone}>
-            Готово
-          </button>
+
+        {warnings.length > 0 && (
+          <div>
+            <div className="mb-1 text-sm font-medium text-amber-700">Предупреждения (загружены, но проверьте):</div>
+            <IssueList items={warnings} tone="amber" />
+          </div>
+        )}
+
+        {errors.length > 0 && (
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-sm font-medium text-rose-700">Строки с ошибками:</span>
+              <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => downloadErrorRows(result)}>
+                Скачать ошибочные строки
+              </button>
+            </div>
+            <IssueList items={errors} tone="rose" />
+          </div>
+        )}
+
+        {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+        <div className="flex flex-wrap justify-end gap-2">
+          {blocked ? (
+            <>
+              <button type="button" className="btn-ghost" onClick={restart}>
+                Исправить и загрузить заново
+              </button>
+              {valid > 0 &&
+                (conflict ? (
+                  <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, true)}>
+                    {busy ? 'Загрузка…' : 'Всё равно загрузить'}
+                  </button>
+                ) : (
+                  <button type="button" className="btn-primary" disabled={busy} onClick={() => upload(false, true)}>
+                    {busy ? 'Загрузка…' : `Загрузить только корректные (${valid})`}
+                  </button>
+                ))}
+            </>
+          ) : (
+            <button type="button" className="btn-primary" onClick={onDone}>
+              Готово
+            </button>
+          )}
         </div>
       </div>
     );
@@ -193,7 +295,8 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
     <div className="space-y-4">
       <p className="text-sm text-slate-500">
         Загрузите файл по <a className="text-brand-600 hover:underline" href={receiptTemplateUrl()}>шаблону</a>. Новые
-        наименования уйдут на подтверждение в «Номенклатуру». Строки с ошибками будут показаны отдельно.
+        наименования уйдут на подтверждение в «Номенклатуру». Если в файле есть ошибки — по умолчанию ничего не
+        загрузится, чтобы позиции не потерялись.
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
@@ -222,11 +325,11 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
           Отмена
         </button>
         {conflict ? (
-          <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true)}>
+          <button type="button" className="btn-danger" disabled={busy} onClick={() => upload(true, pendingPartial)}>
             {busy ? 'Загрузка…' : 'Загрузить повторно'}
           </button>
         ) : (
-          <button type="button" className="btn-primary" disabled={busy || !file} onClick={() => upload(false)}>
+          <button type="button" className="btn-primary" disabled={busy || !file} onClick={() => upload(false, false)}>
             {busy ? 'Загрузка…' : 'Импортировать'}
           </button>
         )}
@@ -235,9 +338,26 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
   );
 }
 
-function ReceiptDetail({ receipt }: { receipt: Receipt }) {
+function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: () => void }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const cancel = async () => {
+    if (!window.confirm('Отменить приход и удалить все его позиции? Действие нельзя вернуть — данные останутся только в журнале аудита.')) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await apiDelete(`/receipts/${receipt.id}`);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось отменить приход');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap gap-x-8 gap-y-1">
@@ -277,6 +397,19 @@ function ReceiptDetail({ receipt }: { receipt: Receipt }) {
           ))}
         </tbody>
       </table>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+      {isAdmin && (
+        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+          <span className="text-xs text-slate-400">
+            Отмена доступна, пока из позиций прихода ничего не списано.
+          </span>
+          <button type="button" className="btn-danger" disabled={busy} onClick={cancel}>
+            {busy ? 'Отмена…' : 'Отменить приход'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

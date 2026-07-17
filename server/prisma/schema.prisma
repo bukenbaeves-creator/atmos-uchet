@@ -276,7 +276,8 @@ model Receipt {
   source     ReceiptSource @default(manual)
   supplier   String? // наименование поставщика
   note       String?
-  importHash String? // sha256 файла импорта — контроль повторной загрузки
+  importHash String? // sha256 файла импорта — контроль повторной загрузки (точный дубль файла)
+  contentHash String? // сигнатура состава (позиции+кол-во) — ловит повторную загрузку изменённого файла
   batches    Batch[]
 
   createdBy Int?

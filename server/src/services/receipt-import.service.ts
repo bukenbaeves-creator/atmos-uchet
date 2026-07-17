@@ -5,6 +5,7 @@ import customParseFormat from 'dayjs/plugin/customParseFormat.js';
 dayjs.extend(customParseFormat);
 
 export interface ParsedLine {
+  row: number; // номер строки в файле (1-based)
   name: string;
   qty: number;
   purchasePrice: number;
@@ -12,9 +13,16 @@ export interface ParsedLine {
   expiryDate: Date | null; // null = бессрочный
   unit: string | null;
 }
-export interface ParseError {
+export interface ParseIssue {
   row: number; // номер строки в файле (1-based)
   reason: string;
+  cells?: string[]; // исходная строка файла — для выгрузки ошибочных строк
+}
+export interface ParseResult {
+  rows: ParsedLine[];
+  errors: ParseIssue[]; // строки, которые нельзя загрузить
+  warnings: ParseIssue[]; // строки грузятся, но требуют внимания (напр. просрочка)
+  header: string[]; // строка заголовка файла — для выгрузки ошибочных строк
 }
 
 const RE = {
@@ -67,12 +75,11 @@ function parseDate(v: unknown): Date | null | undefined {
 }
 
 // Разбирает файл прихода: ищет строку заголовка, колонки, валидирует строки.
-export async function parseReceiptRows(
-  buffer: Buffer,
-  filename: string,
-): Promise<{ rows: ParsedLine[]; errors: ParseError[] }> {
+export async function parseReceiptRows(buffer: Buffer, filename: string): Promise<ParseResult> {
   const grid = await readGrid(buffer, filename);
-  if (!grid.length) return { rows: [], errors: [{ row: 0, reason: 'Файл пуст или не распознан' }] };
+  if (!grid.length) {
+    return { rows: [], errors: [{ row: 0, reason: 'Файл пуст или не распознан' }], warnings: [], header: [] };
+  }
 
   // Ищем строку заголовка (где есть колонки «наименование» и «количество»)
   let headerIdx = -1;
@@ -92,11 +99,22 @@ export async function parseReceiptRows(
     }
   }
   if (headerIdx === -1) {
-    return { rows: [], errors: [{ row: 0, reason: 'Не найдены колонки «Наименование» и «Количество». Используйте шаблон.' }] };
+    return {
+      rows: [],
+      errors: [{ row: 0, reason: 'Не найдены колонки «Наименование» и «Количество». Используйте шаблон.' }],
+      warnings: [],
+      header: [],
+    };
   }
 
+  const header = grid[headerIdx];
+  // Начало сегодняшнего дня — для отметки уже просроченных позиций.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const rows: ParsedLine[] = [];
-  const errors: ParseError[] = [];
+  const errors: ParseIssue[] = [];
+  const warnings: ParseIssue[] = [];
   for (let i = headerIdx + 1; i < grid.length; i++) {
     const r = grid[i];
     const rowNo = i + 1; // 1-based номер строки в файле
@@ -112,10 +130,15 @@ export async function parseReceiptRows(
     if (expiry === undefined) problems.push('некорректный срок годности');
 
     if (problems.length) {
-      errors.push({ row: rowNo, reason: problems.join('; ') });
+      errors.push({ row: rowNo, reason: problems.join('; '), cells: r });
       continue;
     }
+    // Предупреждение: срок годности уже истёк (позиция всё равно грузится).
+    if (expiry && expiry < today) {
+      warnings.push({ row: rowNo, reason: `${name}: срок годности истёк (${expiry.toLocaleDateString('ru-RU')})` });
+    }
     rows.push({
+      row: rowNo,
       name,
       qty,
       purchasePrice: isFinite(price) ? price : 0,
@@ -124,5 +147,5 @@ export async function parseReceiptRows(
       unit: col.unit !== undefined ? (r[col.unit] ?? '').trim() || null : null,
     });
   }
-  return { rows, errors };
+  return { rows, errors, warnings, header };
 }
