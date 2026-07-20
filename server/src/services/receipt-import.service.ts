@@ -12,6 +12,8 @@ export interface ParsedLine {
   series: string | null;
   expiryDate: Date | null; // null = бессрочный
   unit: string | null;
+  type: 'drug' | 'consumable' | null; // тип позиции (из колонки «Тип»)
+  minStock: number | null; // минимальный остаток (из колонки)
 }
 export interface ParseIssue {
   row: number; // номер строки в файле (1-based)
@@ -33,7 +35,17 @@ const RE = {
   expiry: /срок|годн|expir/i,
   date: /дата/i,
   unit: /^ед|единиц|\bunit\b/i,
+  type: /^\s*тип/i, // «Тип (расходник/препарат)»
+  minStock: /минимал|остаток|мин\.?\s*ост/i, // «Минимальный остаток»
 };
+
+// Тип позиции из ячейки: «препарат» → drug, «расходник» → consumable, иначе null.
+function parseType(v: unknown): 'drug' | 'consumable' | null {
+  const s = String(v ?? '').toLowerCase();
+  if (/преп|drug/.test(s)) return 'drug';
+  if (/расход|consum/.test(s)) return 'consumable';
+  return null;
+}
 
 // Приводит файл (xlsx/csv) к сетке строк-ячеек (как в разборе банковской выписки).
 async function readGrid(buffer: Buffer, filename: string): Promise<string[][]> {
@@ -137,6 +149,7 @@ export async function parseReceiptRows(buffer: Buffer, filename: string): Promis
     if (expiry && expiry < today) {
       warnings.push({ row: rowNo, reason: `${name}: срок годности истёк (${expiry.toLocaleDateString('ru-RU')})` });
     }
+    const minStockRaw = col.minStock !== undefined ? parseNum(r[col.minStock]) : NaN;
     rows.push({
       row: rowNo,
       name,
@@ -145,6 +158,8 @@ export async function parseReceiptRows(buffer: Buffer, filename: string): Promis
       series: col.series !== undefined ? (r[col.series] ?? '').trim() || null : null,
       expiryDate: expiry ?? null,
       unit: col.unit !== undefined ? (r[col.unit] ?? '').trim() || null : null,
+      type: col.type !== undefined ? parseType(r[col.type]) : null,
+      minStock: isFinite(minStockRaw) && minStockRaw >= 0 ? minStockRaw : null,
     });
   }
   return { rows, errors, warnings, header };

@@ -57,22 +57,32 @@ const receiptInclude = {
   lines: true,
 };
 
-// Единицу из строки применяем к позиции только если у неё она ещё пустая (не перетираем).
-async function applyNomUnit(tx: PrismaClientOrTx, nomenclatureId: number, unit?: string | null) {
-  if (unit) await tx.nomenclature.updateMany({ where: { id: nomenclatureId, unitMeasure: null }, data: { unitMeasure: unit } });
+// Применяет к позиции свойства из строки прихода: тип и мин.остаток (если заданы —
+// приходят из Excel-импорта), единицу — только если у позиции она ещё пустая.
+async function applyNomAttrs(
+  tx: PrismaClientOrTx,
+  nomenclatureId: number,
+  attrs: { type?: 'drug' | 'consumable' | null; minStock?: number | null; unit?: string | null },
+  userId: number,
+) {
+  const data: Record<string, unknown> = {};
+  if (attrs.type) data.type = attrs.type;
+  if (attrs.minStock != null) data.minStock = attrs.minStock;
+  if (Object.keys(data).length) await tx.nomenclature.update({ where: { id: nomenclatureId }, data: { ...data, updatedBy: userId } });
+  if (attrs.unit) await tx.nomenclature.updateMany({ where: { id: nomenclatureId, unitMeasure: null }, data: { unitMeasure: attrs.unit } });
 }
 
-// Создаёт партии из строк (одобренный приход): сопоставляет номенклатуру.
+// Создаёт партии из строк (одобренный приход): сопоставляет номенклатуру и применяет свойства.
 async function materializeLines(
   tx: PrismaClientOrTx,
   receiptId: number,
   date: Date,
-  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null }>,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null; type?: 'drug' | 'consumable' | null; minStock?: number | null }>,
   req: Request,
 ) {
   for (const line of lines) {
     const match = await matchOrCreateNomenclature(line.name, req, tx);
-    await applyNomUnit(tx, match.nomenclatureId, line.unit);
+    await applyNomAttrs(tx, match.nomenclatureId, line, req.user!.id);
     await tx.batch.create({
       data: {
         receiptId,
@@ -93,7 +103,7 @@ async function materializeLines(
 async function storeLines(
   tx: PrismaClientOrTx,
   receiptId: number,
-  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null }>,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null; type?: 'drug' | 'consumable' | null; minStock?: number | null }>,
 ) {
   for (const line of lines) {
     await tx.receiptLine.create({
@@ -105,6 +115,8 @@ async function storeLines(
         series: line.series ?? null,
         expiryDate: line.expiryDate ?? null,
         unit: line.unit ?? null,
+        type: line.type ?? null,
+        minStock: line.minStock ?? null,
       },
     });
   }
@@ -175,10 +187,12 @@ router.get(
       { header: 'Серия', key: 'series', width: 16 },
       { header: 'Срок годности (дд.мм.гггг, пусто = бессрочно)', key: 'expiry', width: 40 },
       { header: 'Единица', key: 'unit', width: 12 },
+      { header: 'Тип (расходник/препарат)', key: 'type', width: 24 },
+      { header: 'Минимальный остаток', key: 'minStock', width: 20 },
     ];
     ws.getRow(1).font = { bold: true };
-    ws.addRow({ name: 'Шприц 5мл', qty: 100, price: 50, series: 'S-2026-01', expiry: '01.12.2027', unit: 'шт' });
-    ws.addRow({ name: 'Вата стерильная', qty: 20, price: 30, series: '', expiry: '', unit: 'уп' });
+    ws.addRow({ name: 'Шприц 5мл', qty: 100, price: 50, series: 'S-2026-01', expiry: '01.12.2027', unit: 'шт', type: 'расходник', minStock: 50 });
+    ws.addRow({ name: 'Лидокаин 2%', qty: 20, price: 300, series: 'L-2026-02', expiry: '01.06.2027', unit: 'амп', type: 'препарат', minStock: 10 });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="receipt-template.xlsx"');
     await wb.xlsx.write(res);
@@ -289,6 +303,8 @@ router.patch(
         series: l.series,
         expiryDate: l.expiryDate,
         unit: l.unit,
+        type: l.type,
+        minStock: l.minStock != null ? Number(l.minStock) : null,
       }));
       await materializeLines(tx, id, receipt.date, lines, req);
       await tx.receiptLine.deleteMany({ where: { receiptId: id } });
