@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiUpload, apiDelete, ApiError, receiptTemplateUrl } from '../api/client';
+import { apiGet, apiPost, apiPatch, apiUpload, apiDelete, ApiError, receiptTemplateUrl } from '../api/client';
 import type { ListResponse } from '../api/hooks';
 import { formatDate, isExpired } from '../lib/format';
-import { PageHeader, Spinner, EmptyState, Modal, Pagination, Hint } from '../components/ui';
+import { PageHeader, Spinner, EmptyState, Modal, Pagination, Hint, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { MoneyInput } from '../components/MoneyInput';
 import { useAuth } from '../lib/auth';
@@ -16,12 +16,34 @@ interface Batch {
   expiryDate: string | null;
   nomenclature?: { nameDisplay: string };
 }
+interface RLine {
+  id: number;
+  name: string;
+  qty: number;
+  purchasePrice?: number; // только администратору
+  series: string | null;
+  expiryDate: string | null;
+  type: 'drug' | 'consumable' | null;
+  minStock?: number | null;
+  unit: string | null;
+}
 interface Receipt {
   id: number;
   date: string;
+  status: 'pending' | 'approved';
   supplier: string | null;
   note: string | null;
+  createdBy?: number | null;
   batches: Batch[];
+  lines: RLine[];
+}
+// Позиция для автоподсказки наименования (существующая номенклатура)
+interface NomOption {
+  id: number;
+  nameDisplay: string;
+  type: 'drug' | 'consumable';
+  unitMeasure: string | null;
+  minStock: number;
 }
 
 interface Line {
@@ -31,9 +53,24 @@ interface Line {
   series: string;
   expiryDate: string;
   noExpiry: boolean;
+  type: '' | 'drug' | 'consumable';
+  minStock: string;
+  unit: string;
 }
 
-const emptyLine = (): Line => ({ name: '', qty: '', purchasePrice: '', series: '', expiryDate: '', noExpiry: false });
+const emptyLine = (): Line => ({ name: '', qty: '', purchasePrice: '', series: '', expiryDate: '', noExpiry: false, type: '', minStock: '', unit: '' });
+
+function StatusBadge({ status }: { status: 'pending' | 'approved' }) {
+  return status === 'approved' ? <Badge tone="green">Одобрен</Badge> : <Badge tone="amber">На согласовании</Badge>;
+}
+// Наименования состава прихода: из партий (одобрен) или из строк (на согласовании).
+function receiptItems(r: Receipt): string {
+  const src = r.status === 'approved' ? r.batches.map((b) => `${b.nomenclature?.nameDisplay ?? '—'} ×${b.qtyIn}`) : r.lines.map((l) => `${l.name} ×${l.qty}`);
+  return src.join(', ');
+}
+function receiptCount(r: Receipt): number {
+  return r.status === 'approved' ? r.batches.length : r.lines.length;
+}
 
 // Отображение срока годности: красный если истёк, «бессрочный» если пусто.
 function ExpiryCell({ value }: { value: string | null }) {
@@ -63,25 +100,17 @@ export function Receipts() {
 
   const columns: Column<Receipt>[] = [
     { header: 'Дата', cell: (r) => formatDate(r.date) },
+    { header: 'Статус', cell: (r) => <StatusBadge status={r.status} /> },
     { header: 'Поставщик', cell: (r) => r.supplier ?? '—' },
-    { header: 'Позиций', align: 'right', cell: (r) => r.batches.length },
-    {
-      header: 'Состав',
-      cell: (r) => (
-        <span className="text-slate-600">
-          {r.batches
-            .map((b) => `${b.nomenclature?.nameDisplay ?? '—'} ×${b.qtyIn}`)
-            .join(', ')}
-        </span>
-      ),
-    },
+    { header: 'Позиций', align: 'right', cell: (r) => receiptCount(r) },
+    { header: 'Состав', cell: (r) => <span className="text-slate-600">{receiptItems(r)}</span> },
   ];
 
   return (
     <div>
       <PageHeader
         title="Приход на склад"
-        subtitle="Оприходование материалов. Клик по строке — состав прихода. Новые наименования уходят на подтверждение в «Номенклатуру»."
+        subtitle="Оприходование материалов. Приход медсестры проходит согласование администратора. Клик по строке — состав прихода."
         actions={
           <>
             <button className="btn-ghost" onClick={() => setImporting(true)}>
@@ -140,6 +169,7 @@ interface ImportResult {
   valid: number;
   blocked: boolean;
   blockReason?: 'errors' | 'expired' | null;
+  pending?: boolean; // импорт медсестры — ушёл на согласование
   errors: ImportIssue[];
   warnings: ImportIssue[];
   header: string[];
@@ -234,7 +264,7 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
   };
 
   if (result) {
-    const { imported, valid, blocked, blockReason, errors, warnings } = result;
+    const { imported, valid, blocked, blockReason, errors, warnings, pending } = result;
 
     // Заблокировано из-за просрочки — грузим только после явного подтверждения.
     if (blocked && blockReason === 'expired') {
@@ -276,8 +306,9 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
           </div>
         ) : (
           <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            Импортировано строк: <b>{imported}</b>
+            {pending ? 'Отправлено на согласование' : 'Импортировано'} строк: <b>{imported}</b>
             {errors.length > 0 && <> · пропущено с ошибками: <b>{errors.length}</b></>}
+            {pending && <div className="mt-1 text-xs text-emerald-700">Приход появится в остатках после одобрения администратором.</div>}
           </div>
         )}
 
@@ -379,26 +410,36 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
 function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: () => void }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const isPending = receipt.status === 'pending';
+  const canReject = isAdmin || receipt.createdBy === user?.id;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const cancel = async () => {
-    if (!window.confirm('Отменить приход и удалить все его позиции? Действие нельзя вернуть — данные останутся только в журнале аудита.')) return;
+  const run = async (fn: () => Promise<unknown>, confirmMsg?: string) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
     setError(null);
     setBusy(true);
     try {
-      await apiDelete(`/receipts/${receipt.id}`);
+      await fn();
       onDeleted();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Не удалось отменить приход');
+      setError(err instanceof ApiError ? err.message : 'Не удалось выполнить действие');
     } finally {
       setBusy(false);
     }
   };
 
+  const approve = () => run(() => apiPatch(`/receipts/${receipt.id}/approve`, {}), 'Одобрить приход? Позиции будут оприходованы и появятся в остатках склада.');
+  const cancelApproved = () =>
+    run(() => apiDelete(`/receipts/${receipt.id}`), 'Отменить приход и удалить все его позиции? Действие нельзя вернуть — данные останутся только в журнале аудита.');
+  const reject = () => run(() => apiDelete(`/receipts/${receipt.id}`), 'Отклонить приход на согласовании?');
+
+  const typeLabel = (t: 'drug' | 'consumable' | null) => (t === 'drug' ? 'Препарат' : t === 'consumable' ? 'Расходник' : '—');
+
   return (
     <div className="space-y-3 text-sm">
-      <div className="flex flex-wrap gap-x-8 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-1">
+        <StatusBadge status={receipt.status} />
         <div>
           <span className="text-slate-400">Дата:</span> {formatDate(receipt.date)}
         </div>
@@ -411,48 +452,100 @@ function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: ()
           </div>
         )}
       </div>
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-400">
-            <th className="py-2">Наименование</th>
-            <th className="py-2 text-right">Кол-во</th>
-            <th className="py-2">Серия</th>
-            <th className="py-2">Срок годности</th>
-            {isAdmin && <th className="py-2 text-right">Цена закупа</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {receipt.batches.map((b) => (
-            <tr key={b.id} className="border-b border-slate-100">
-              <td className="py-2 font-medium">{b.nomenclature?.nameDisplay ?? '—'}</td>
-              <td className="py-2 text-right">{b.qtyIn}</td>
-              <td className="py-2">{b.series ?? '—'}</td>
-              <td className="py-2">
-                <ExpiryCell value={b.expiryDate} />
-              </td>
-              {isAdmin && <td className="py-2 text-right">{b.purchasePrice != null ? b.purchasePrice.toLocaleString('ru-RU') : '—'}</td>}
+
+      {isPending ? (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-400">
+              <th className="py-2">Наименование</th>
+              <th className="py-2">Тип</th>
+              <th className="py-2 text-right">Кол-во</th>
+              <th className="py-2 text-right">Мин. остаток</th>
+              <th className="py-2">Серия</th>
+              <th className="py-2">Срок годности</th>
+              {isAdmin && <th className="py-2 text-right">Цена закупа</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {receipt.lines.map((l) => (
+              <tr key={l.id} className="border-b border-slate-100">
+                <td className="py-2 font-medium">{l.name}</td>
+                <td className="py-2">{typeLabel(l.type)}</td>
+                <td className="py-2 text-right">{l.qty}</td>
+                <td className="py-2 text-right">{l.minStock != null ? l.minStock : '—'}</td>
+                <td className="py-2">{l.series ?? '—'}</td>
+                <td className="py-2">
+                  <ExpiryCell value={l.expiryDate} />
+                </td>
+                {isAdmin && <td className="py-2 text-right">{l.purchasePrice != null ? l.purchasePrice.toLocaleString('ru-RU') : '—'}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-400">
+              <th className="py-2">Наименование</th>
+              <th className="py-2 text-right">Кол-во</th>
+              <th className="py-2">Серия</th>
+              <th className="py-2">Срок годности</th>
+              {isAdmin && <th className="py-2 text-right">Цена закупа</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {receipt.batches.map((b) => (
+              <tr key={b.id} className="border-b border-slate-100">
+                <td className="py-2 font-medium">{b.nomenclature?.nameDisplay ?? '—'}</td>
+                <td className="py-2 text-right">{b.qtyIn}</td>
+                <td className="py-2">{b.series ?? '—'}</td>
+                <td className="py-2">
+                  <ExpiryCell value={b.expiryDate} />
+                </td>
+                {isAdmin && <td className="py-2 text-right">{b.purchasePrice != null ? b.purchasePrice.toLocaleString('ru-RU') : '—'}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
 
-      {isAdmin && (
-        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+      {isPending ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
           <span className="text-xs text-slate-400">
-            Отмена доступна, пока из позиций прихода ничего не списано.
+            {isAdmin ? 'Одобрите — позиции попадут в остатки. Отклонение удалит приход.' : 'Приход ожидает одобрения администратора.'}
           </span>
-          <button type="button" className="btn-danger" disabled={busy} onClick={cancel}>
-            {busy ? 'Отмена…' : 'Отменить приход'}
-          </button>
+          <div className="flex gap-2">
+            {canReject && (
+              <button type="button" className="btn-ghost text-rose-600" disabled={busy} onClick={reject}>
+                Отклонить
+              </button>
+            )}
+            {isAdmin && (
+              <button type="button" className="btn-primary" disabled={busy} onClick={approve}>
+                {busy ? '…' : 'Одобрить'}
+              </button>
+            )}
+          </div>
         </div>
+      ) : (
+        isAdmin && (
+          <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+            <span className="text-xs text-slate-400">Отмена доступна, пока из позиций прихода ничего не списано.</span>
+            <button type="button" className="btn-danger" disabled={busy} onClick={cancelApproved}>
+              {busy ? 'Отмена…' : 'Отменить приход'}
+            </button>
+          </div>
+        )
       )}
     </div>
   );
 }
 
 function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [supplier, setSupplier] = useState('');
   const [note, setNote] = useState('');
@@ -460,10 +553,30 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Автоподсказки: существующая номенклатура (для «Наименование») и поставщики.
+  const { data: nomData } = useQuery({
+    queryKey: ['nomenclature', 'for-receipt'],
+    queryFn: () => apiGet<{ items: NomOption[] }>('/nomenclature'),
+  });
+  const noms = nomData?.items ?? [];
+  const { data: supData } = useQuery({
+    queryKey: ['receipt-suppliers'],
+    queryFn: () => apiGet<{ items: string[] }>('/receipts/suppliers'),
+  });
+  const suppliers = supData?.items ?? [];
+
   const setLine = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const addLine = () => setLines((ls) => [...ls, emptyLine()]);
   const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, idx) => idx !== i) : ls));
+
+  // Ввод наименования: если точно совпало с существующей позицией — подставляем её
+  // тип, минимальный остаток и единицу (для быстрого заполнения).
+  const setName = (i: number, value: string) => {
+    const match = noms.find((n) => n.nameDisplay.trim().toLowerCase() === value.trim().toLowerCase());
+    if (match) setLine(i, { name: value, type: match.type, minStock: match.minStock != null ? String(match.minStock) : '', unit: match.unitMeasure ?? '' });
+    else setLine(i, { name: value });
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -479,8 +592,10 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
           qty: Number(l.qty),
           purchasePrice: l.purchasePrice === '' || l.purchasePrice == null ? 0 : Number(l.purchasePrice),
           series: l.series || null,
-          // Бессрочная позиция — без срока годности
           expiryDate: l.noExpiry ? null : l.expiryDate || null,
+          type: l.type || null,
+          minStock: l.minStock === '' ? null : Number(l.minStock),
+          unit: l.unit || null,
         })),
       });
       onSaved();
@@ -494,14 +609,32 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      {!isAdmin && (
+        <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          Приход уйдёт на согласование администратора и попадёт в остатки после одобрения.
+        </div>
+      )}
+      <datalist id="nom-names">
+        {noms.map((n) => (
+          <option key={n.id} value={n.nameDisplay} />
+        ))}
+      </datalist>
+      <datalist id="receipt-suppliers">
+        {suppliers.map((s, i) => (
+          <option key={i} value={s} />
+        ))}
+      </datalist>
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label className="label">Дата прихода *</label>
           <input type="date" className="input" required min="2020-01-01" value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>
-          <label className="label">Поставщик</label>
-          <input className="input" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="ТОО, аптека…" />
+          <label className="label">
+            Поставщик<Hint text="Начните вводить — подскажет ранее внесённых поставщиков." />
+          </label>
+          <input className="input" list="receipt-suppliers" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="ТОО, аптека…" />
         </div>
         <div>
           <label className="label">Примечание</label>
@@ -513,27 +646,44 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
         <div className="text-sm font-medium text-slate-600">Позиции прихода</div>
         {lines.map((l, i) => (
           <div key={i} className="grid grid-cols-12 items-end gap-2 rounded-lg border border-slate-200 p-2">
-            <div className="col-span-12 sm:col-span-3">
-              <label className="label">Наименование *</label>
-              <input className="input" required value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} />
+            <div className="col-span-12 sm:col-span-5">
+              <label className="label">
+                Наименование *<Hint text="Начните вводить — подскажет уже внесённые позиции; при совпадении подставит тип и минимальный остаток." />
+              </label>
+              <input className="input" list="nom-names" required value={l.name} onChange={(e) => setName(i, e.target.value)} />
             </div>
-            <div className="col-span-4 sm:col-span-1">
+            <div className="col-span-6 sm:col-span-3">
+              <label className="label">Тип</label>
+              <select className="input" value={l.type} onChange={(e) => setLine(i, { type: e.target.value as '' | 'drug' | 'consumable' })}>
+                <option value="">— тип —</option>
+                <option value="consumable">Расходник</option>
+                <option value="drug">Препарат</option>
+              </select>
+            </div>
+            <div className="col-span-6 sm:col-span-2">
               <label className="label">Кол-во *</label>
               <input type="number" min={0} step="any" className="input" required value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
             </div>
-            <div className="col-span-4 sm:col-span-2">
+            <div className="col-span-6 sm:col-span-2">
               <label className="label">
                 Цена закупа *<Hint text="Цена за одну единицу прихода, не за всю партию." />
               </label>
               <MoneyInput value={l.purchasePrice} onChange={(v) => setLine(i, { purchasePrice: v as string })} required />
             </div>
-            <div className="col-span-4 sm:col-span-2">
+
+            <div className="col-span-6 sm:col-span-2">
+              <label className="label">
+                Мин. остаток<Hint text="Порог дозакупа: ниже него позиция подсветится и попадёт в список к закупу." />
+              </label>
+              <input type="number" min={0} step="any" className="input" value={l.minStock} onChange={(e) => setLine(i, { minStock: e.target.value })} placeholder="—" />
+            </div>
+            <div className="col-span-6 sm:col-span-3">
               <label className="label">
                 Серия<Hint text="Номер серии/партии от производителя (с упаковки) — для отзыва партий и контроля." />
               </label>
               <input className="input" value={l.series} onChange={(e) => setLine(i, { series: e.target.value })} />
             </div>
-            <div className="col-span-6 sm:col-span-2">
+            <div className="col-span-6 sm:col-span-3">
               <label className="label">
                 Срок годности<Hint text="До какой даты препарат годен. Для позиций без срока отметьте «Бессрочный»." />
               </label>
@@ -545,7 +695,7 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
                 onChange={(e) => setLine(i, { expiryDate: e.target.value })}
               />
             </div>
-            <div className="col-span-4 sm:col-span-1">
+            <div className="col-span-4 sm:col-span-2">
               <label className="label">Бессрочный</label>
               <div className="flex h-[38px] items-center">
                 <input type="checkbox" checked={l.noExpiry} onChange={(e) => setLine(i, { noExpiry: e.target.checked })} />
@@ -570,7 +720,7 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
           Отмена
         </button>
         <button type="submit" className="btn-primary" disabled={busy}>
-          {busy ? 'Сохранение…' : 'Оприходовать'}
+          {busy ? 'Сохранение…' : isAdmin ? 'Оприходовать' : 'Отправить на согласование'}
         </button>
       </div>
     </form>

@@ -44,6 +44,13 @@ enum RevisionStatus {
   applied
 }
 
+// Статус прихода: pending — создан медсестрой, ждёт одобрения админа (партии ещё не
+// созданы, на остаток не влияет); approved — одобрен/создан админом (партии созданы).
+enum ReceiptStatus {
+  pending
+  approved
+}
+
 // Направление денежной операции: платёж (приход) или возврат (расход пациенту)
 enum PaymentDirection {
   payment
@@ -282,18 +289,41 @@ model Receipt {
   id         Int           @id @default(autoincrement())
   date       DateTime
   source     ReceiptSource @default(manual)
+  status     ReceiptStatus @default(approved) // pending — приход медсестры на согласовании
   supplier   String? // наименование поставщика
   note       String?
   importHash String? // sha256 файла импорта — контроль повторной загрузки (точный дубль файла)
   contentHash String? // сигнатура состава (позиции+кол-во) — ловит повторную загрузку изменённого файла
   batches    Batch[]
+  lines      ReceiptLine[] // предложенные строки, пока приход на согласовании (партии ещё не созданы)
 
-  createdBy Int?
-  createdAt DateTime  @default(now())
-  updatedBy Int?
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-  deletedBy Int?
+  approvedBy Int?
+  approvedAt DateTime?
+  createdBy  Int?
+  createdAt  DateTime  @default(now())
+  updatedBy  Int?
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+  deletedBy  Int?
+}
+
+// Предложенная строка прихода «на согласовании» (до одобрения партии не создаются,
+// чтобы непроверенные данные не попадали в остаток/себестоимость). При одобрении из
+// строк создаются партии, а сами строки удаляются.
+model ReceiptLine {
+  id            Int               @id @default(autoincrement())
+  receipt       Receipt           @relation(fields: [receiptId], references: [id])
+  receiptId     Int
+  name          String // сырое наименование (как ввела медсестра)
+  qty           Decimal           @db.Decimal(14, 3)
+  purchasePrice Decimal           @db.Decimal(14, 2)
+  series        String?
+  expiryDate    DateTime?
+  type          NomenclatureType? // предложенный тип позиции (расходник/препарат)
+  minStock      Decimal?          @db.Decimal(14, 3) // предложенный минимальный остаток
+  unit          String? // предложенная единица
+
+  @@index([receiptId])
 }
 
 // Партия прихода: цена закупа, серия, срок годности, текущий остаток.

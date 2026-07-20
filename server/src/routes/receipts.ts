@@ -1,10 +1,11 @@
 import { Router } from 'express';
+import type { Request } from 'express';
 import { z } from 'zod';
 import { createHash } from 'crypto';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
-import { prisma } from '../lib/prisma.js';
-import { asyncHandler, badRequest, notFound, ApiError } from '../lib/http.js';
+import { prisma, type PrismaClientOrTx } from '../lib/prisma.js';
+import { asyncHandler, badRequest, notFound, forbidden, ApiError } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
@@ -41,7 +42,12 @@ const lineSchema = z.object({
   purchasePrice: moneyAmount(),
   series: optionalString(100),
   expiryDate: optionalDate,
+  // Свойства позиции (номенклатуры), задаются при заполнении прихода:
+  type: z.enum(['drug', 'consumable']).optional().nullable(),
+  minStock: z.coerce.number().nonnegative().max(1_000_000).optional().nullable(),
+  unit: optionalString(50),
 });
+type ReceiptLineInput = z.infer<typeof lineSchema>;
 
 const schema = z.object({
   date: requiredDate('Необходимо указать дату прихода'),
@@ -49,6 +55,77 @@ const schema = z.object({
   note: optionalString(500),
   lines: z.array(lineSchema).min(1, 'Добавьте хотя бы одну позицию'),
 });
+
+// Что отдаём по приходу: партии (одобренный) + строки (на согласовании).
+const receiptInclude = {
+  batches: { include: { nomenclature: { select: { nameDisplay: true } } } },
+  lines: true,
+};
+
+// Применяет предложенные свойства позиции к номенклатуре (тип/мин.остаток — если заданы;
+// единицу — только если у позиции она ещё пустая, чтобы не перетирать).
+async function applyNomAttrs(
+  tx: PrismaClientOrTx,
+  nomenclatureId: number,
+  attrs: { type?: string | null; minStock?: number | null; unit?: string | null },
+  userId: number,
+) {
+  const data: Record<string, unknown> = {};
+  if (attrs.type) data.type = attrs.type;
+  if (attrs.minStock != null) data.minStock = attrs.minStock;
+  if (Object.keys(data).length) await tx.nomenclature.update({ where: { id: nomenclatureId }, data: { ...data, updatedBy: userId } });
+  if (attrs.unit) await tx.nomenclature.updateMany({ where: { id: nomenclatureId, unitMeasure: null }, data: { unitMeasure: attrs.unit } });
+}
+
+// Создаёт партии из строк (одобренный приход): сопоставляет номенклатуру и применяет свойства.
+async function materializeLines(
+  tx: PrismaClientOrTx,
+  receiptId: number,
+  date: Date,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; type?: string | null; minStock?: number | null; unit?: string | null }>,
+  req: Request,
+) {
+  for (const line of lines) {
+    const match = await matchOrCreateNomenclature(line.name, req, tx);
+    await applyNomAttrs(tx, match.nomenclatureId, line, req.user!.id);
+    await tx.batch.create({
+      data: {
+        receiptId,
+        nomenclatureId: match.nomenclatureId,
+        qtyIn: line.qty,
+        qtyRemaining: line.qty,
+        purchasePrice: line.purchasePrice,
+        series: line.series ?? null,
+        expiryDate: line.expiryDate ?? null,
+        receivedAt: date,
+        createdBy: req.user!.id,
+      },
+    });
+  }
+}
+
+// Сохраняет строки прихода «на согласовании» (партии не создаём — на остаток не влияет).
+async function storeLines(
+  tx: PrismaClientOrTx,
+  receiptId: number,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; type?: string | null; minStock?: number | null; unit?: string | null }>,
+) {
+  for (const line of lines) {
+    await tx.receiptLine.create({
+      data: {
+        receiptId,
+        name: line.name,
+        qty: line.qty,
+        purchasePrice: line.purchasePrice,
+        series: line.series ?? null,
+        expiryDate: line.expiryDate ?? null,
+        type: (line.type as 'drug' | 'consumable' | null) ?? null,
+        minStock: line.minStock ?? null,
+        unit: line.unit ?? null,
+      },
+    });
+  }
+}
 
 // Список приходов (admin: с ценами партий; nurse обычно сюда не ходит, но роль не запрещаем на чтение)
 router.get(
@@ -59,8 +136,8 @@ router.get(
     const [rows, total] = await Promise.all([
       prisma.receipt.findMany({
         where: { deletedAt: null },
-        include: { batches: { include: { nomenclature: { select: { nameDisplay: true } } } } },
-        orderBy: { date: 'desc' },
+        include: receiptInclude,
+        orderBy: [{ status: 'desc' }, { date: 'desc' }], // pending — вверху (сначала «на согласовании»)
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -70,54 +147,41 @@ router.get(
   }),
 );
 
-// Создание прихода (только admin — приход управляет ценами закупа).
+// Создание прихода (nurse и admin). Админ создаёт сразу одобренный приход (партии
+// создаются, остаток меняется). Медсестра создаёт приход «на согласовании»: строки
+// сохраняются, партии НЕ создаются — на остаток не влияет, пока админ не одобрит.
 router.post(
   '/',
-  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = schema.parse(req.body);
+    const isAdmin = req.user!.role === 'admin';
     const created = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
         data: {
           date: data.date,
           source: 'manual',
+          status: isAdmin ? 'approved' : 'pending',
           supplier: data.supplier ?? null,
           note: data.note ?? null,
           createdBy: req.user!.id,
           updatedBy: req.user!.id,
+          ...(isAdmin ? { approvedBy: req.user!.id, approvedAt: new Date() } : {}),
         },
       });
-      for (const line of data.lines) {
-        const match = await matchOrCreateNomenclature(line.name, req, tx);
-        await tx.batch.create({
-          data: {
-            receiptId: receipt.id,
-            nomenclatureId: match.nomenclatureId,
-            qtyIn: line.qty,
-            qtyRemaining: line.qty,
-            purchasePrice: line.purchasePrice,
-            series: line.series ?? null,
-            expiryDate: line.expiryDate ?? null,
-            receivedAt: data.date,
-            createdBy: req.user!.id,
-          },
-        });
-      }
-      const full = await tx.receipt.findUnique({
-        where: { id: receipt.id },
-        include: { batches: { include: { nomenclature: { select: { nameDisplay: true } } } } },
-      });
-      await writeAudit(req, { action: 'create', entity: 'receipt', entityId: receipt.id, after: full }, tx);
+      if (isAdmin) await materializeLines(tx, receipt.id, data.date, data.lines, req);
+      else await storeLines(tx, receipt.id, data.lines);
+
+      const full = await tx.receipt.findUnique({ where: { id: receipt.id }, include: receiptInclude });
+      await writeAudit(req, { action: 'create', entity: 'receipt', entityId: receipt.id, after: { status: receipt.status, lines: data.lines.length } }, tx);
       return full;
     });
     res.status(201).json(stripCost(serialize(created), req.user!.role));
   }),
 );
 
-// Шаблон для импорта прихода (admin): заголовки + пример строки.
+// Шаблон для импорта прихода (nurse и admin): заголовки + пример строки.
 router.get(
   '/template.xlsx',
-  requireAdmin,
   asyncHandler(async (_req, res) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Приход');
@@ -146,7 +210,6 @@ router.get(
 // файлу (importHash) и по составу (contentHash), пока не подтверждён override.
 router.post(
   '/import',
-  requireAdmin,
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) throw badRequest('Файл не загружен');
@@ -178,62 +241,97 @@ router.post(
         throw new ApiError(409, 'Приход с такими же позициями уже загружался (возможно, изменённый файл). Для повторной загрузки подтвердите действие.');
     }
 
+    const isAdmin = req.user!.role === 'admin';
     const receiptId = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
         data: {
           date,
           source: 'import',
+          status: isAdmin ? 'approved' : 'pending',
           supplier: supplier ?? null,
           importHash,
           contentHash,
           createdBy: req.user!.id,
           updatedBy: req.user!.id,
+          ...(isAdmin ? { approvedBy: req.user!.id, approvedAt: new Date() } : {}),
         },
       });
-      for (const line of rows) {
-        const match = await matchOrCreateNomenclature(line.name, req, tx);
-        // Единица из файла — на новую позицию (если её ещё не заполнили)
-        if (line.unit) {
-          await tx.nomenclature.updateMany({
-            where: { id: match.nomenclatureId, unitMeasure: null },
-            data: { unitMeasure: line.unit },
-          });
-        }
-        await tx.batch.create({
-          data: {
-            receiptId: receipt.id,
-            nomenclatureId: match.nomenclatureId,
-            qtyIn: line.qty,
-            qtyRemaining: line.qty,
-            purchasePrice: line.purchasePrice,
-            series: line.series,
-            expiryDate: line.expiryDate,
-            receivedAt: date,
-            createdBy: req.user!.id,
-          },
-        });
-      }
+      // Админ — сразу создаём партии; медсестра — сохраняем строки на согласование.
+      if (isAdmin) await materializeLines(tx, receipt.id, date, rows, req);
+      else await storeLines(tx, receipt.id, rows);
       await writeAudit(
         req,
-        { action: 'create', entity: 'receipt', entityId: receipt.id, after: { imported: rows.length, source: 'import', partial: errors.length > 0 } },
+        { action: 'create', entity: 'receipt', entityId: receipt.id, after: { imported: rows.length, source: 'import', status: receipt.status, partial: errors.length > 0 } },
         tx,
       );
       return receipt.id;
     });
 
-    res.json({ imported: rows.length, valid: rows.length, blocked: false, blockReason: null, errors, warnings, header, receiptId });
+    res.json({ imported: rows.length, valid: rows.length, blocked: false, blockReason: null, pending: !isAdmin, errors, warnings, header, receiptId });
   }),
 );
 
-// Отмена прихода (admin): удаляет документ и его партии целиком — например, чтобы
-// исправить ошибочный файл импорта и загрузить заново. Разрешено ТОЛЬКО пока из
-// партий ничего не списывали: иначе удаление исказило бы себестоимость прошлых
-// списаний (FIFO/FEFO). Данные сохраняются в аудите (before) на случай разбора.
-router.delete(
-  '/:id',
+// Список поставщиков (для автоподсказки при вводе прихода).
+router.get(
+  '/suppliers',
+  asyncHandler(async (_req, res) => {
+    const rows = await prisma.receipt.findMany({
+      where: { deletedAt: null, supplier: { not: null } },
+      distinct: ['supplier'],
+      select: { supplier: true },
+      orderBy: { supplier: 'asc' },
+      take: 500,
+    });
+    res.json({ items: rows.map((r) => r.supplier).filter(Boolean) });
+  }),
+);
+
+// Одобрение прихода «на согласовании» (admin): из строк создаются партии (влияют на
+// остаток), применяются свойства позиций (тип/мин.остаток/единица), строки удаляются.
+router.patch(
+  '/:id/approve',
   requireAdmin,
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
+    const approved = await prisma.$transaction(async (tx) => {
+      const receipt = await tx.receipt.findFirst({ where: { id, deletedAt: null }, include: { lines: true } });
+      if (!receipt) throw notFound('Приход не найден');
+      if (receipt.status !== 'pending') throw badRequest('Приход уже одобрен');
+      if (!receipt.lines.length) throw badRequest('В приходе нет позиций');
+
+      const lines = receipt.lines.map((l) => ({
+        name: l.name,
+        qty: Number(l.qty),
+        purchasePrice: Number(l.purchasePrice),
+        series: l.series,
+        expiryDate: l.expiryDate,
+        type: l.type,
+        minStock: l.minStock != null ? Number(l.minStock) : null,
+        unit: l.unit,
+      }));
+      await materializeLines(tx, id, receipt.date, lines, req);
+      await tx.receiptLine.deleteMany({ where: { receiptId: id } });
+      const updated = await tx.receipt.update({
+        where: { id },
+        data: { status: 'approved', approvedBy: req.user!.id, approvedAt: new Date(), updatedBy: req.user!.id },
+        include: receiptInclude,
+      });
+      await writeAudit(req, { action: 'update', entity: 'receipt', entityId: id, after: { status: 'approved', approved: lines.length } }, tx);
+      return updated;
+    });
+    res.json(stripCost(serialize(approved), req.user!.role));
+  }),
+);
+
+// Отмена/отклонение прихода. Приход «на согласовании» может отклонить админ или
+// создавшая его медсестра (партий ещё нет — просто удаляем строки). Одобренный приход
+// отменяет только админ и только пока из партий ничего не списывали (иначе исказится
+// себестоимость прошлых списаний). Данные сохраняются в аудите (before).
+router.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const isAdmin = req.user!.role === 'admin';
     const receipt = await prisma.receipt.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -243,6 +341,20 @@ router.delete(
       },
     });
     if (!receipt) throw notFound('Приход не найден');
+
+    // «На согласовании» — партий нет, отклоняем (удаляем строки).
+    if (receipt.status === 'pending') {
+      if (!isAdmin && receipt.createdBy !== req.user!.id) throw forbidden('Отклонить можно только свой приход на согласовании');
+      await prisma.$transaction(async (tx) => {
+        await writeAudit(req, { action: 'delete', entity: 'receipt', entityId: id, before: receipt }, tx);
+        await tx.receiptLine.deleteMany({ where: { receiptId: id } });
+        await tx.receipt.delete({ where: { id } });
+      });
+      return res.json({ ok: true });
+    }
+
+    // Одобренный приход — только админ.
+    if (!isAdmin) throw forbidden('Отменять одобренный приход может только администратор');
 
     // Партии, из которых уже списывали (есть распределения или остаток меньше прихода).
     const consumed = receipt.batches.filter((b) => b.allocations.length > 0 || !b.qtyRemaining.equals(b.qtyIn));
@@ -264,6 +376,7 @@ router.delete(
       // Пишем аудит до удаления — со всем составом, чтобы приход можно было восстановить вручную.
       await writeAudit(req, { action: 'delete', entity: 'receipt', entityId: id, before: receipt }, tx);
       await tx.batch.deleteMany({ where: { receiptId: id } });
+      await tx.receiptLine.deleteMany({ where: { receiptId: id } });
       await tx.receipt.delete({ where: { id } });
     });
     res.json({ ok: true });
