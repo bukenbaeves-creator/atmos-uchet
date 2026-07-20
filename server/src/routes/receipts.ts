@@ -42,12 +42,7 @@ const lineSchema = z.object({
   purchasePrice: moneyAmount(),
   series: optionalString(100),
   expiryDate: optionalDate,
-  // Свойства позиции (номенклатуры), задаются при заполнении прихода:
-  type: z.enum(['drug', 'consumable']).optional().nullable(),
-  minStock: z.coerce.number().nonnegative().max(1_000_000).optional().nullable(),
-  unit: optionalString(50),
 });
-type ReceiptLineInput = z.infer<typeof lineSchema>;
 
 const schema = z.object({
   date: requiredDate('Необходимо указать дату прихода'),
@@ -62,32 +57,22 @@ const receiptInclude = {
   lines: true,
 };
 
-// Применяет предложенные свойства позиции к номенклатуре (тип/мин.остаток — если заданы;
-// единицу — только если у позиции она ещё пустая, чтобы не перетирать).
-async function applyNomAttrs(
-  tx: PrismaClientOrTx,
-  nomenclatureId: number,
-  attrs: { type?: string | null; minStock?: number | null; unit?: string | null },
-  userId: number,
-) {
-  const data: Record<string, unknown> = {};
-  if (attrs.type) data.type = attrs.type;
-  if (attrs.minStock != null) data.minStock = attrs.minStock;
-  if (Object.keys(data).length) await tx.nomenclature.update({ where: { id: nomenclatureId }, data: { ...data, updatedBy: userId } });
-  if (attrs.unit) await tx.nomenclature.updateMany({ where: { id: nomenclatureId, unitMeasure: null }, data: { unitMeasure: attrs.unit } });
+// Единицу из строки применяем к позиции только если у неё она ещё пустая (не перетираем).
+async function applyNomUnit(tx: PrismaClientOrTx, nomenclatureId: number, unit?: string | null) {
+  if (unit) await tx.nomenclature.updateMany({ where: { id: nomenclatureId, unitMeasure: null }, data: { unitMeasure: unit } });
 }
 
-// Создаёт партии из строк (одобренный приход): сопоставляет номенклатуру и применяет свойства.
+// Создаёт партии из строк (одобренный приход): сопоставляет номенклатуру.
 async function materializeLines(
   tx: PrismaClientOrTx,
   receiptId: number,
   date: Date,
-  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; type?: string | null; minStock?: number | null; unit?: string | null }>,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null }>,
   req: Request,
 ) {
   for (const line of lines) {
     const match = await matchOrCreateNomenclature(line.name, req, tx);
-    await applyNomAttrs(tx, match.nomenclatureId, line, req.user!.id);
+    await applyNomUnit(tx, match.nomenclatureId, line.unit);
     await tx.batch.create({
       data: {
         receiptId,
@@ -108,7 +93,7 @@ async function materializeLines(
 async function storeLines(
   tx: PrismaClientOrTx,
   receiptId: number,
-  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; type?: string | null; minStock?: number | null; unit?: string | null }>,
+  lines: Array<{ name: string; qty: number; purchasePrice: number; series?: string | null; expiryDate?: Date | null; unit?: string | null }>,
 ) {
   for (const line of lines) {
     await tx.receiptLine.create({
@@ -119,8 +104,6 @@ async function storeLines(
         purchasePrice: line.purchasePrice,
         series: line.series ?? null,
         expiryDate: line.expiryDate ?? null,
-        type: (line.type as 'drug' | 'consumable' | null) ?? null,
-        minStock: line.minStock ?? null,
         unit: line.unit ?? null,
       },
     });
@@ -305,8 +288,6 @@ router.patch(
         purchasePrice: Number(l.purchasePrice),
         series: l.series,
         expiryDate: l.expiryDate,
-        type: l.type,
-        minStock: l.minStock != null ? Number(l.minStock) : null,
         unit: l.unit,
       }));
       await materializeLines(tx, id, receipt.date, lines, req);

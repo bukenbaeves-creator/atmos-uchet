@@ -23,9 +23,6 @@ interface RLine {
   purchasePrice?: number; // только администратору
   series: string | null;
   expiryDate: string | null;
-  type: 'drug' | 'consumable' | null;
-  minStock?: number | null;
-  unit: string | null;
 }
 interface Receipt {
   id: number;
@@ -41,9 +38,6 @@ interface Receipt {
 interface NomOption {
   id: number;
   nameDisplay: string;
-  type: 'drug' | 'consumable';
-  unitMeasure: string | null;
-  minStock: number;
 }
 
 interface Line {
@@ -53,12 +47,9 @@ interface Line {
   series: string;
   expiryDate: string;
   noExpiry: boolean;
-  type: '' | 'drug' | 'consumable';
-  minStock: string;
-  unit: string;
 }
 
-const emptyLine = (): Line => ({ name: '', qty: '', purchasePrice: '', series: '', expiryDate: '', noExpiry: false, type: '', minStock: '', unit: '' });
+const emptyLine = (): Line => ({ name: '', qty: '', purchasePrice: '', series: '', expiryDate: '', noExpiry: false });
 
 function StatusBadge({ status }: { status: 'pending' | 'approved' }) {
   return status === 'approved' ? <Badge tone="green">Одобрен</Badge> : <Badge tone="amber">На согласовании</Badge>;
@@ -434,8 +425,6 @@ function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: ()
     run(() => apiDelete(`/receipts/${receipt.id}`), 'Отменить приход и удалить все его позиции? Действие нельзя вернуть — данные останутся только в журнале аудита.');
   const reject = () => run(() => apiDelete(`/receipts/${receipt.id}`), 'Отклонить приход на согласовании?');
 
-  const typeLabel = (t: 'drug' | 'consumable' | null) => (t === 'drug' ? 'Препарат' : t === 'consumable' ? 'Расходник' : '—');
-
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-x-8 gap-y-1">
@@ -458,9 +447,7 @@ function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: ()
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-400">
               <th className="py-2">Наименование</th>
-              <th className="py-2">Тип</th>
               <th className="py-2 text-right">Кол-во</th>
-              <th className="py-2 text-right">Мин. остаток</th>
               <th className="py-2">Серия</th>
               <th className="py-2">Срок годности</th>
               {isAdmin && <th className="py-2 text-right">Цена закупа</th>}
@@ -470,9 +457,7 @@ function ReceiptDetail({ receipt, onDeleted }: { receipt: Receipt; onDeleted: ()
             {receipt.lines.map((l) => (
               <tr key={l.id} className="border-b border-slate-100">
                 <td className="py-2 font-medium">{l.name}</td>
-                <td className="py-2">{typeLabel(l.type)}</td>
                 <td className="py-2 text-right">{l.qty}</td>
-                <td className="py-2 text-right">{l.minStock != null ? l.minStock : '—'}</td>
                 <td className="py-2">{l.series ?? '—'}</td>
                 <td className="py-2">
                   <ExpiryCell value={l.expiryDate} />
@@ -570,14 +555,6 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
   const addLine = () => setLines((ls) => [...ls, emptyLine()]);
   const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, idx) => idx !== i) : ls));
 
-  // Ввод наименования: если точно совпало с существующей позицией — подставляем её
-  // тип, минимальный остаток и единицу (для быстрого заполнения).
-  const setName = (i: number, value: string) => {
-    const match = noms.find((n) => n.nameDisplay.trim().toLowerCase() === value.trim().toLowerCase());
-    if (match) setLine(i, { name: value, type: match.type, minStock: match.minStock != null ? String(match.minStock) : '', unit: match.unitMeasure ?? '' });
-    else setLine(i, { name: value });
-  };
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -593,9 +570,6 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
           purchasePrice: l.purchasePrice === '' || l.purchasePrice == null ? 0 : Number(l.purchasePrice),
           series: l.series || null,
           expiryDate: l.noExpiry ? null : l.expiryDate || null,
-          type: l.type || null,
-          minStock: l.minStock === '' ? null : Number(l.minStock),
-          unit: l.unit || null,
         })),
       });
       onSaved();
@@ -646,44 +620,29 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
         <div className="text-sm font-medium text-slate-600">Позиции прихода</div>
         {lines.map((l, i) => (
           <div key={i} className="grid grid-cols-12 items-end gap-2 rounded-lg border border-slate-200 p-2">
-            <div className="col-span-12 sm:col-span-5">
+            <div className="col-span-12 sm:col-span-3">
               <label className="label">
-                Наименование *<Hint text="Начните вводить — подскажет уже внесённые позиции; при совпадении подставит тип и минимальный остаток." />
+                Наименование *<Hint text="Начните вводить — подскажет уже внесённые позиции." />
               </label>
-              <input className="input" list="nom-names" required value={l.name} onChange={(e) => setName(i, e.target.value)} />
+              <input className="input" list="nom-names" required value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} />
             </div>
-            <div className="col-span-6 sm:col-span-3">
-              <label className="label">Тип</label>
-              <select className="input" value={l.type} onChange={(e) => setLine(i, { type: e.target.value as '' | 'drug' | 'consumable' })}>
-                <option value="">— тип —</option>
-                <option value="consumable">Расходник</option>
-                <option value="drug">Препарат</option>
-              </select>
-            </div>
-            <div className="col-span-6 sm:col-span-2">
+            <div className="col-span-4 sm:col-span-1">
               <label className="label">Кол-во *</label>
               <input type="number" min={0} step="any" className="input" required value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
             </div>
-            <div className="col-span-6 sm:col-span-2">
+            <div className="col-span-4 sm:col-span-2">
               <label className="label">
                 Цена закупа *<Hint text="Цена за одну единицу прихода, не за всю партию." />
               </label>
               <MoneyInput value={l.purchasePrice} onChange={(v) => setLine(i, { purchasePrice: v as string })} required />
             </div>
-
-            <div className="col-span-6 sm:col-span-2">
-              <label className="label">
-                Мин. остаток<Hint text="Порог дозакупа: ниже него позиция подсветится и попадёт в список к закупу." />
-              </label>
-              <input type="number" min={0} step="any" className="input" value={l.minStock} onChange={(e) => setLine(i, { minStock: e.target.value })} placeholder="—" />
-            </div>
-            <div className="col-span-6 sm:col-span-3">
+            <div className="col-span-4 sm:col-span-2">
               <label className="label">
                 Серия<Hint text="Номер серии/партии от производителя (с упаковки) — для отзыва партий и контроля." />
               </label>
               <input className="input" value={l.series} onChange={(e) => setLine(i, { series: e.target.value })} />
             </div>
-            <div className="col-span-6 sm:col-span-3">
+            <div className="col-span-6 sm:col-span-2">
               <label className="label">
                 Срок годности<Hint text="До какой даты препарат годен. Для позиций без срока отметьте «Бессрочный»." />
               </label>
