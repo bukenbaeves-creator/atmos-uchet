@@ -359,6 +359,7 @@ model ExpenseWriteoff {
   nomenclatureId Int
   category       ExpenseCategory @relation(fields: [categoryId], references: [id])
   categoryId     Int
+  opType         String? // вид операции (из справочника op_type) — для аналитики по видам операций
   qty            Decimal         @db.Decimal(14, 3) // в единице списания
   costTotal      Decimal         @default(0) @db.Decimal(14, 2) // зафиксированная себестоимость (только админ)
   isShortage     Boolean         @default(false) // списано при нехватке остатка

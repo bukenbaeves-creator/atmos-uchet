@@ -7,6 +7,7 @@ import { PageHeader, Spinner, EmptyState, Modal, Badge, Pagination } from '../co
 import { Table, type Column } from '../components/Table';
 import { PatientBlock, type PatientValue } from '../components/PatientBlock';
 import { useAuth } from '../lib/auth';
+import { useDictionaries } from '../lib/dictionaries';
 
 interface Writeoff {
   id: number;
@@ -14,6 +15,7 @@ interface Writeoff {
   qty: number;
   costTotal?: number; // приходит только администратору
   isShortage: boolean;
+  opType?: string | null;
   patient?: { id: number; fio: string };
   nomenclature?: { nameDisplay: string; unitWriteoff: string | null };
   category?: { name: string };
@@ -42,6 +44,7 @@ export function Writeoffs() {
       align: 'right',
       cell: (w) => `${w.qty}${w.nomenclature?.unitWriteoff ? ' ' + w.nomenclature.unitWriteoff : ''}`,
     },
+    { header: 'Вид операции', cell: (w) => w.opType ?? '—' },
     { header: 'Категория', cell: (w) => w.category?.name ?? '—' },
     {
       header: 'Остаток',
@@ -104,6 +107,7 @@ interface WLine {
 function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
   const [patient, setPatient] = useState<PatientValue>({});
   const [categoryId, setCategoryId] = useState('');
+  const [opType, setOpType] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [lines, setLines] = useState<WLine[]>([{ uid: 1, nomenclatureId: '', qty: '' }]);
   const [nextUid, setNextUid] = useState(2);
@@ -116,6 +120,7 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
     queryKey: ['expense-categories'],
     queryFn: () => apiGet<{ items: CatOption[] }>('/expense-categories'),
   });
+  const { data: dict } = useDictionaries();
 
   const setLine = (uid: number, patch: Partial<WLine>) =>
     setLines((ls) => ls.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
@@ -143,6 +148,7 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
           birthDate: patient.birthDate || null,
         },
         categoryId: Number(categoryId),
+        opType: opType || null,
         date,
         lines: filled.map((l) => ({ nomenclatureId: Number(l.nomenclatureId), qty: Number(l.qty) })),
       });
@@ -180,7 +186,7 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
     <form onSubmit={submit} className="space-y-4">
       <PatientBlock value={patient} onChange={setPatient} />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label className="label">Категория расхода *</label>
           <select className="input" required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
@@ -188,6 +194,17 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
             {cats?.items.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Вид операции</label>
+          <select className="input" value={opType} onChange={(e) => setOpType(e.target.value)}>
+            <option value="">— не указан —</option>
+            {dict?.op_type?.map((o) => (
+              <option key={o.id} value={o.label}>
+                {o.label}
               </option>
             ))}
           </select>

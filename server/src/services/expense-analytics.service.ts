@@ -52,7 +52,7 @@ export async function expenseAnalytics(period: AnalyticsPeriod, isAdmin: boolean
   for (const w of items) {
     const qty = num(w.qty);
     const cost = num(w.costTotal);
-    const op = (w.operation?.opType ?? '').trim() || NO_OP;
+    const op = (w.opType ?? w.operation?.opType ?? '').trim() || NO_OP;
     totalQty = round2(totalQty + qty);
     totalCost = round2(totalCost + cost);
     positions.add(w.nomenclatureId);

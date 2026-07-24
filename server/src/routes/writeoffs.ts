@@ -7,10 +7,11 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import { serialize } from '../lib/serialize.js';
-import { requiredDate, patientInputSchema } from '../schemas.js';
+import { requiredDate, optionalString, patientInputSchema } from '../schemas.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
 import { allocateWriteoff } from '../services/costing.service.js';
 import { stripCost } from '../services/expense-visibility.service.js';
+import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { patientSearchOR } from '../lib/search.js';
 
 // Списание материалов на пациента/операцию. Основная операция медсестры.
@@ -21,6 +22,7 @@ router.use(requireAuth, requireRole('nurse', 'admin'));
 const schema = z.object({
   patient: patientInputSchema,
   operationId: z.coerce.number().int().positive().optional().nullable(),
+  opType: optionalString(200), // вид операции (из справочника op_type)
   nomenclatureId: z.coerce.number().int().positive({ message: 'Выберите позицию' }),
   categoryId: z.coerce.number().int().positive({ message: 'Выберите категорию расхода' }),
   qty: z.coerce.number({ invalid_type_error: 'Количество должно быть числом' }).positive('Количество должно быть больше нуля').max(1_000_000),
@@ -63,6 +65,7 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = schema.parse(req.body);
+    await assertDictionaryValue('op_type', data.opType ?? null); // проверяем вид операции по справочнику
 
     const result = await prisma.$transaction(async (tx) => {
       // Позиция должна быть подтверждена (active) — списывать draft нельзя
@@ -88,6 +91,7 @@ router.post(
         data: {
           patientId,
           operationId: data.operationId ?? null,
+          opType: data.opType ?? null,
           nomenclatureId: data.nomenclatureId,
           categoryId: data.categoryId,
           qty: data.qty,
@@ -124,6 +128,7 @@ router.post(
 const bulkSchema = z.object({
   patient: patientInputSchema,
   operationId: z.coerce.number().int().positive().optional().nullable(),
+  opType: optionalString(200), // вид операции (из справочника op_type) — общий для карточки
   categoryId: z.coerce.number().int().positive({ message: 'Выберите категорию расхода' }),
   date: requiredDate('Необходимо указать дату'),
   lines: z
@@ -140,6 +145,7 @@ router.post(
   '/bulk',
   asyncHandler(async (req, res) => {
     const data = bulkSchema.parse(req.body);
+    await assertDictionaryValue('op_type', data.opType ?? null); // проверяем вид операции по справочнику
 
     const created = await prisma.$transaction(async (tx) => {
       const cat = await tx.expenseCategory.findFirst({ where: { id: data.categoryId, isActive: true } });
@@ -164,6 +170,7 @@ router.post(
           data: {
             patientId,
             operationId: data.operationId ?? null,
+            opType: data.opType ?? null,
             nomenclatureId: line.nomenclatureId,
             categoryId: data.categoryId,
             qty: line.qty,
