@@ -36,14 +36,18 @@ export function Patients() {
   const { data: dict } = useDictionaries();
   const [merging, setMerging] = useState<Patient | null>(null);
 
-  const cityOptions = (dict?.city ?? []).map((o) => ({ value: o.label, label: o.label }));
+  const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
 
   const columns: Column<Patient>[] = [
     { header: 'ФИО', cell: (p) => <span className="font-medium text-brand-700">{p.fio}</span> },
     { header: 'Телефон', cell: (p) => p.phone },
-    { header: 'Город', cell: (p) => p.city ?? '—', filter: { kind: 'select', param: 'city', options: cityOptions } },
+    { header: 'Город', cell: (p) => p.city ?? '—', filter: { kind: 'select', param: 'city', options: opt(dict?.city) } },
     { header: 'Дата рождения', cell: (p) => formatDate(p.birthDate), filter: { kind: 'dateRange', paramFrom: 'birthFrom', paramTo: 'birthTo' } },
-    { header: 'Услуга', cell: (p) => (p.services && p.services.length ? p.services.join(', ') : '—') },
+    {
+      header: 'Услуга',
+      cell: (p) => (p.services && p.services.length ? p.services.join(', ') : '—'),
+      filter: { kind: 'select', param: 'service', options: opt(dict?.op_type) },
+    },
   ];
 
   return (

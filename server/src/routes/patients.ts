@@ -59,6 +59,15 @@ const router = makeCrudRouter({
     if (eqStr(q.city)) where.city = eqStr(q.city);
     const bd = dateRange(q.birthFrom, q.birthTo);
     if (bd) where.birthDate = bd;
+    // Фильтр по «услуге»: пациенты с операцией такого вида или консультацией с такой
+    // интересующей операцией (услуга — вычисляемое поле, поэтому ищем по связям).
+    const service = eqStr(q.service);
+    if (service) {
+      where.OR = [
+        { operations: { some: { deletedAt: null, opType: service } } },
+        { consultations: { some: { deletedAt: null, interestOperation: service } } },
+      ];
+    }
     return where;
   },
   // Тянем услуги для колонки «Услуга» (только нужные поля связанных записей).
