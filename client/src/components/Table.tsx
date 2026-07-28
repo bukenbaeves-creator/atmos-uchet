@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 // Фильтр столбца (серверный: значение уходит в query-параметр с именем param).
 export type ColumnFilter =
@@ -14,21 +14,28 @@ export interface Column<T> {
   filter?: ColumnFilter;
 }
 
-const inputCls = 'w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 focus:border-brand-400 focus:outline-none';
+const inputCls = 'w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-normal normal-case text-slate-700 focus:border-brand-400 focus:outline-none';
 
-// Один фильтр в шапке столбца. Читает значение из filters[param], пишет через onFilter.
-function FilterControl({
-  filter,
-  filters,
-  onFilter,
-}: {
-  filter: ColumnFilter;
-  filters: Record<string, unknown>;
-  onFilter: (key: string, value: unknown) => void;
-}) {
+function isFilterActive(f: ColumnFilter, filters: Record<string, unknown>): boolean {
+  if (f.kind === 'dateRange') return !!filters[f.paramFrom] || !!filters[f.paramTo];
+  return !!filters[f.param];
+}
+
+function clearFilter(f: ColumnFilter, onFilter: (k: string, v: unknown) => void) {
+  if (f.kind === 'dateRange') {
+    onFilter(f.paramFrom, '');
+    onFilter(f.paramTo, '');
+  } else {
+    onFilter(f.param, '');
+  }
+}
+
+// Содержимое выпадающего фильтра (текст / список / диапазон дат).
+function FilterBody({ filter, filters, onFilter }: { filter: ColumnFilter; filters: Record<string, unknown>; onFilter: (k: string, v: unknown) => void }) {
   if (filter.kind === 'text') {
     return (
       <input
+        autoFocus
         className={inputCls}
         placeholder={filter.placeholder ?? 'фильтр…'}
         value={(filters[filter.param] as string) ?? ''}
@@ -38,7 +45,7 @@ function FilterControl({
   }
   if (filter.kind === 'select') {
     return (
-      <select className={inputCls} value={(filters[filter.param] as string) ?? ''} onChange={(e) => onFilter(filter.param, e.target.value)}>
+      <select autoFocus className={inputCls} value={(filters[filter.param] as string) ?? ''} onChange={(e) => onFilter(filter.param, e.target.value)}>
         <option value="">все</option>
         {filter.options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -48,23 +55,16 @@ function FilterControl({
       </select>
     );
   }
-  // dateRange
   return (
-    <div className="flex flex-col gap-1">
-      <input
-        type="date"
-        className={inputCls}
-        title="с"
-        value={(filters[filter.paramFrom] as string) ?? ''}
-        onChange={(e) => onFilter(filter.paramFrom, e.target.value)}
-      />
-      <input
-        type="date"
-        className={inputCls}
-        title="по"
-        value={(filters[filter.paramTo] as string) ?? ''}
-        onChange={(e) => onFilter(filter.paramTo, e.target.value)}
-      />
+    <div className="space-y-1.5">
+      <label className="block text-[11px] text-slate-400">
+        с
+        <input type="date" className={inputCls} value={(filters[filter.paramFrom] as string) ?? ''} onChange={(e) => onFilter(filter.paramFrom, e.target.value)} />
+      </label>
+      <label className="block text-[11px] text-slate-400">
+        по
+        <input type="date" className={inputCls} value={(filters[filter.paramTo] as string) ?? ''} onChange={(e) => onFilter(filter.paramTo, e.target.value)} />
+      </label>
     </div>
   );
 }
@@ -87,33 +87,74 @@ export function Table<T extends { id: number }>({
   const alignCls = (a?: 'right' | 'center') =>
     a === 'right' ? 'text-right tabular-nums' : a === 'center' ? 'text-center' : 'text-left';
 
-  const hasFilters = !!onFilter && columns.some((c) => c.filter);
+  const [openCol, setOpenCol] = useState<number | null>(null);
+  const headRef = useRef<HTMLTableSectionElement>(null);
+  useEffect(() => {
+    if (openCol === null) return;
+    const onDown = (e: MouseEvent) => {
+      if (headRef.current && !headRef.current.contains(e.target as Node)) setOpenCol(null);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openCol]);
+
+  const filterable = !!onFilter && !!filters;
 
   return (
-    <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200/70">
+    // Ограниченная высота + прокрутка: шапка закрепляется при вертикальном скролле.
+    <div className="max-h-[calc(100vh-13rem)] overflow-auto rounded-2xl ring-1 ring-slate-200/70">
       <table className="min-w-full border-separate border-spacing-0 bg-white text-sm">
-        <thead className="sticky top-0 z-10">
+        <thead ref={headRef} className="sticky top-0 z-20">
           <tr>
-            {columns.map((c, i) => (
-              <th
-                key={i}
-                className={`border-b border-slate-200 bg-slate-50/95 px-3.5 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500 backdrop-blur ${alignCls(
-                  c.align,
-                )}`}
-              >
-                {c.header}
-              </th>
-            ))}
-          </tr>
-          {hasFilters && (
-            <tr>
-              {columns.map((c, i) => (
-                <th key={i} className="border-b border-slate-200 bg-slate-50/95 px-2 py-1.5 align-top backdrop-blur">
-                  {c.filter && filters ? <FilterControl filter={c.filter} filters={filters} onFilter={onFilter!} /> : null}
+            {columns.map((c, i) => {
+              const active = filterable && c.filter ? isFilterActive(c.filter, filters!) : false;
+              const clickable = filterable && !!c.filter;
+              const anchorRight = i > columns.length / 2;
+              return (
+                <th
+                  key={i}
+                  className={`relative border-b border-slate-200 bg-slate-50/95 px-3.5 py-2.5 text-xs font-semibold uppercase tracking-wide backdrop-blur ${alignCls(
+                    c.align,
+                  )} ${active ? 'text-brand-600' : 'text-slate-500'}`}
+                >
+                  {clickable ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 hover:text-brand-600"
+                      title="Нажмите, чтобы отфильтровать"
+                      onClick={() => setOpenCol(openCol === i ? null : i)}
+                    >
+                      <span>{c.header}</span>
+                      <svg viewBox="0 0 16 16" width="11" height="11" className={active ? 'fill-brand-600' : 'fill-slate-400'}>
+                        <path d="M1.5 3h13l-5 6v4l-3 1.5V9L1.5 3z" />
+                      </svg>
+                    </button>
+                  ) : (
+                    c.header
+                  )}
+                  {openCol === i && clickable && c.filter && (
+                    <div
+                      className={`absolute top-full z-30 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2 text-left shadow-lg ${anchorRight ? 'right-0' : 'left-0'}`}
+                    >
+                      <FilterBody filter={c.filter} filters={filters!} onFilter={onFilter!} />
+                      {active && (
+                        <button
+                          type="button"
+                          className="mt-2 text-xs text-slate-500 hover:text-rose-600"
+                          onClick={() => {
+                            clearFilter(c.filter!, onFilter!);
+                            setOpenCol(null);
+                          }}
+                        >
+                          Сбросить фильтр
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </th>
-              ))}
-            </tr>
-          )}
+              );
+            })}
+          </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
