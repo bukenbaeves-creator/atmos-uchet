@@ -13,6 +13,7 @@ import {
   moneyAmount,
 } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
+import { dateRange, eqStr } from '../lib/filters.js';
 import { PREPAYMENT_SERVICE } from '../constants.js';
 import { writeAudit } from '../services/audit.service.js';
 
@@ -88,10 +89,15 @@ const router = makeCrudRouter({
   orderBy: { date: 'desc' },
   buildWhere: (q) => {
     const where: Record<string, unknown> = {};
-    if (typeof q.payMethod === 'string' && q.payMethod) where.payMethod = q.payMethod;
-    if (typeof q.terminal === 'string' && q.terminal) where.terminal = q.terminal;
+    if (eqStr(q.payMethod)) where.payMethod = eqStr(q.payMethod);
+    if (eqStr(q.terminal)) where.terminal = eqStr(q.terminal);
+    if (eqStr(q.serviceType)) where.serviceType = eqStr(q.serviceType);
+    if (eqStr(q.opType)) where.opType = eqStr(q.opType);
+    if (q.direction === 'payment' || q.direction === 'refund') where.direction = q.direction;
     if (typeof q.operationId === 'string' && q.operationId) where.operationId = Number(q.operationId);
     if (typeof q.patientId === 'string' && q.patientId) where.patientId = Number(q.patientId);
+    const d = dateRange(q.dateFrom, q.dateTo);
+    if (d) where.date = d;
     return where;
   },
   search: (t) => ({ OR: [...patientSearchOR(t, true), { payMethod: { contains: t, mode: 'insensitive' } }] }),

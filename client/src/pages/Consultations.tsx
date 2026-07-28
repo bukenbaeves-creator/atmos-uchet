@@ -4,8 +4,9 @@ import { JournalPage } from '../components/JournalPage';
 import { useDictionaries } from '../lib/dictionaries';
 import { useAuth } from '../lib/auth';
 import { apiPatch } from '../api/client';
+import dayjs from 'dayjs';
 import { formatDate, formatMoney } from '../lib/format';
-import { Badge, Modal } from '../components/ui';
+import { Badge, Modal, Hint } from '../components/ui';
 import { EntityForm, type Field } from '../components/EntityForm';
 import type { Column } from '../components/Table';
 
@@ -85,19 +86,38 @@ export function Consultations() {
   // Кнопка «Итог» — быстрый ввод итога, пока запись доступна к правке и итог не задан
   const canFillResult = (c: Consultation) => consultationEditable(c, user ?? null) && !c.stage;
 
+  // Дата консультации прошла, а итог не заполнен — напоминаем менеджеру заполнить.
+  const overdueNoResult = (c: Consultation) => !c.stage && !!c.dateKons && dayjs(c.dateKons).isBefore(dayjs(), 'day');
+
+  const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
+
   const columns: Column<Consultation>[] = [
     { header: 'Пациент', cell: (c) => <span className="font-medium">{c.patient?.fio ?? '—'}</span> },
-    { header: 'Дата записи', cell: (c) => formatDate(c.dateZapis) },
-    { header: 'Дата консультации', cell: (c) => formatDate(c.dateKons) },
-    { header: 'Менеджер', cell: (c) => c.manager ?? '—' },
-    { header: 'Врач', cell: (c) => c.doctor ?? '—' },
-    { header: 'Интерес', cell: (c) => c.interestOperation ?? '—' },
+    { header: 'Дата записи', cell: (c) => formatDate(c.dateZapis), filter: { kind: 'dateRange', paramFrom: 'dateZapisFrom', paramTo: 'dateZapisTo' } },
+    { header: 'Дата консультации', cell: (c) => formatDate(c.dateKons), filter: { kind: 'dateRange', paramFrom: 'dateKonsFrom', paramTo: 'dateKonsTo' } },
+    { header: 'Менеджер', cell: (c) => c.manager ?? '—', filter: { kind: 'select', param: 'manager', options: opt(dict?.manager) } },
+    { header: 'Врач', cell: (c) => c.doctor ?? '—', filter: { kind: 'select', param: 'doctor', options: opt(dict?.doctor) } },
+    { header: 'Интерес', cell: (c) => c.interestOperation ?? '—', filter: { kind: 'select', param: 'interestOperation', options: opt(dict?.op_type) } },
     {
       header: 'Оплата',
       align: 'right',
       cell: (c) => (c.amount ? formatMoney(c.amount) : <span className="text-slate-400">бесплатно</span>),
     },
-    { header: 'Итог', cell: (c) => (c.stage ? <Badge tone="blue">{c.stage}</Badge> : <Badge tone="amber">нет итога</Badge>) },
+    {
+      header: 'Итог',
+      filter: { kind: 'select', param: 'stage', options: opt(dict?.consultation_stage) },
+      cell: (c) =>
+        c.stage ? (
+          <Badge tone="blue">{c.stage}</Badge>
+        ) : overdueNoResult(c) ? (
+          <span className="inline-flex items-center">
+            <Badge tone="red">заполните итог</Badge>
+            <Hint text="Дата консультации прошла, а итог не заполнен. Заполните итог по кнопке «Итог» или через «Изменить»." />
+          </span>
+        ) : (
+          <Badge tone="amber">нет итога</Badge>
+        ),
+    },
   ];
 
   return (
@@ -118,20 +138,16 @@ export function Consultations() {
             </button>
           ) : null
         }
-        renderFilters={(params, setParam) => (
-          <select
-            className="input max-w-xs"
-            value={(params.stage as string) ?? ''}
-            onChange={(e) => setParam('stage', e.target.value)}
-          >
-            <option value="">Все стадии</option>
-            {dict?.consultation_stage?.map((s) => (
-              <option key={s.id} value={s.label}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        )}
+        rowClassName={(c) => (overdueNoResult(c) ? 'bg-amber-50/70' : '')}
+        notice={(rows) => {
+          const n = rows.filter(overdueNoResult).length;
+          if (!n) return null;
+          return (
+            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+              ⚠ Консультаций с прошедшей датой без итога на этой странице: <b>{n}</b>. Заполните итог — это нужно для отчётности.
+            </div>
+          );
+        }}
       />
 
       <Modal

@@ -9,6 +9,7 @@ import { normalizePhone } from '../lib/phone.js';
 import { computeOperation } from '../services/compute.js';
 import { serialize } from '../lib/serialize.js';
 import { patientSearchOR } from '../lib/search.js';
+import { dateRange, eqStr } from '../lib/filters.js';
 import { writeAudit } from '../services/audit.service.js';
 import { requiredString, birthDateSchema } from '../schemas.js';
 
@@ -53,6 +54,13 @@ const router = makeCrudRouter({
   createSchema: schema,
   orderBy: { fio: 'asc' },
   search: (t) => ({ OR: patientSearchOR(t, false) }),
+  buildWhere: (q) => {
+    const where: Record<string, unknown> = {};
+    if (eqStr(q.city)) where.city = eqStr(q.city);
+    const bd = dateRange(q.birthFrom, q.birthTo);
+    if (bd) where.birthDate = bd;
+    return where;
+  },
   // Тянем услуги для колонки «Услуга» (только нужные поля связанных записей).
   include: {
     operations: {

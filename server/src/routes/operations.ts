@@ -6,6 +6,7 @@ import { computeOperation } from '../services/compute.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
 import { patientInputSchema, requiredDate, requiredString, optionalString, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
+import { dateRange, eqStr } from '../lib/filters.js';
 
 const schema = z.object({
   patient: patientInputSchema,
@@ -50,11 +51,14 @@ const router = makeCrudRouter({
   orderBy: { dateOp: 'desc' },
   buildWhere: (q) => {
     const where: Record<string, unknown> = {};
-    if (typeof q.opType === 'string' && q.opType) where.opType = q.opType;
-    if (typeof q.surgeon === 'string' && q.surgeon) where.surgeon = q.surgeon;
+    if (eqStr(q.opType)) where.opType = eqStr(q.opType);
+    if (eqStr(q.surgeon)) where.surgeon = eqStr(q.surgeon);
+    if (eqStr(q.manager)) where.manager = eqStr(q.manager);
     if (typeof q.patientId === 'string' && q.patientId) where.patientId = Number(q.patientId);
     if (q.contractSigned === 'true') where.contractSigned = true;
     if (q.contractSigned === 'false') where.contractSigned = false;
+    const d = dateRange(q.dateOpFrom, q.dateOpTo);
+    if (d) where.dateOp = d;
     return where;
   },
   search: (t) => ({ OR: [...patientSearchOR(t, true), { opType: { contains: t, mode: 'insensitive' } }] }),

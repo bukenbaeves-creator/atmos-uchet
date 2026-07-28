@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 import { JournalPage } from '../components/JournalPage';
 import { formatDate, formatMoney } from '../lib/format';
 import { Badge } from '../components/ui';
+import { useDictionaries } from '../lib/dictionaries';
 import type { Field } from '../components/EntityForm';
 import type { Column } from '../components/Table';
 
@@ -38,12 +39,15 @@ const fields: Field[] = [
 ];
 
 export function Operations() {
+  const { data: dict } = useDictionaries();
+  const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
+
   const columns: Column<Operation>[] = [
     { header: 'Пациент', cell: (o) => <span className="font-medium">{o.patient?.fio ?? '—'}</span> },
-    { header: 'Дата', cell: (o) => formatDate(o.dateOp) },
-    { header: 'Тип', cell: (o) => o.opType ?? '—' },
-    { header: 'Менеджер', cell: (o) => o.manager ?? '—' },
-    { header: 'Врач', cell: (o) => o.surgeon ?? '—' },
+    { header: 'Дата', cell: (o) => formatDate(o.dateOp), filter: { kind: 'dateRange', paramFrom: 'dateOpFrom', paramTo: 'dateOpTo' } },
+    { header: 'Тип', cell: (o) => o.opType ?? '—', filter: { kind: 'select', param: 'opType', options: opt(dict?.op_type) } },
+    { header: 'Менеджер', cell: (o) => o.manager ?? '—', filter: { kind: 'select', param: 'manager', options: opt(dict?.manager) } },
+    { header: 'Врач', cell: (o) => o.surgeon ?? '—', filter: { kind: 'select', param: 'surgeon', options: opt(dict?.doctor) } },
     { header: 'К оплате', align: 'right', cell: (o) => formatMoney(o.totalDue) },
     { header: 'Оплачено', align: 'right', cell: (o) => formatMoney(o.paid) },
     {

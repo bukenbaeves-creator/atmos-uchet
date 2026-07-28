@@ -95,14 +95,21 @@ export function Cashbox() {
   const qc = useQueryClient();
   const [refundOpen, setRefundOpen] = useState(false);
 
+  const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
+
   const columns: Column<Payment>[] = [
     { header: 'Пациент', cell: (p) => <span className="font-medium">{p.patient?.fio ?? '—'}</span> },
-    { header: 'Дата', cell: (p) => formatDate(p.date) },
+    { header: 'Дата', cell: (p) => formatDate(p.date), filter: { kind: 'dateRange', paramFrom: 'dateFrom', paramTo: 'dateTo' } },
     {
       header: 'Тип',
+      filter: { kind: 'select', param: 'direction', options: [{ value: 'payment', label: 'Платёж' }, { value: 'refund', label: 'Возврат' }] },
       cell: (p) => (p.direction === 'refund' ? <Badge tone="red">возврат</Badge> : <Badge tone="green">платёж</Badge>),
     },
-    { header: 'Услуга', cell: (p) => (p.opType ? `${p.serviceType ?? '—'} · ${p.opType}` : p.serviceType ?? '—') },
+    {
+      header: 'Услуга',
+      filter: { kind: 'select', param: 'serviceType', options: opt(dict?.service_type) },
+      cell: (p) => (p.opType ? `${p.serviceType ?? '—'} · ${p.opType}` : p.serviceType ?? '—'),
+    },
     {
       header: 'Сумма',
       align: 'right',
@@ -113,8 +120,8 @@ export function Cashbox() {
         </span>
       ),
     },
-    { header: 'Способ', cell: (p) => p.payMethod ?? '—' },
-    { header: 'Терминал', cell: (p) => p.terminal ?? '—' },
+    { header: 'Способ', cell: (p) => p.payMethod ?? '—', filter: { kind: 'select', param: 'payMethod', options: opt(dict?.pay_method) } },
+    { header: 'Терминал', cell: (p) => p.terminal ?? '—', filter: { kind: 'select', param: 'terminal', options: opt(dict?.terminal) } },
     {
       header: 'За операцию',
       cell: (p) => (p.operation ? `${p.operation.opType ?? 'операция'} · ${formatDate(p.operation.dateOp)}` : '—'),
@@ -137,20 +144,6 @@ export function Cashbox() {
           </button>
         }
         onRowClick={(p) => p.patient && navigate(`/patients/${p.patient.id}`)}
-        renderFilters={(params, setParam) => (
-          <select
-            className="input max-w-xs"
-            value={(params.payMethod as string) ?? ''}
-            onChange={(e) => setParam('payMethod', e.target.value)}
-          >
-            <option value="">Все способы</option>
-            {dict?.pay_method?.map((s) => (
-              <option key={s.id} value={s.label}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        )}
       />
 
       <Modal open={refundOpen} onClose={() => setRefundOpen(false)} title="Возврат денег пациенту">

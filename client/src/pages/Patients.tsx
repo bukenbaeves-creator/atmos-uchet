@@ -7,6 +7,7 @@ import type { ListResponse } from '../api/hooks';
 import { formatDate } from '../lib/format';
 import { Modal } from '../components/ui';
 import { useAuth } from '../lib/auth';
+import { useDictionaries } from '../lib/dictionaries';
 import type { Field } from '../components/EntityForm';
 import type { Column } from '../components/Table';
 
@@ -32,13 +33,16 @@ export function Patients() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const qc = useQueryClient();
+  const { data: dict } = useDictionaries();
   const [merging, setMerging] = useState<Patient | null>(null);
+
+  const cityOptions = (dict?.city ?? []).map((o) => ({ value: o.label, label: o.label }));
 
   const columns: Column<Patient>[] = [
     { header: 'ФИО', cell: (p) => <span className="font-medium text-brand-700">{p.fio}</span> },
     { header: 'Телефон', cell: (p) => p.phone },
-    { header: 'Город', cell: (p) => p.city ?? '—' },
-    { header: 'Дата рождения', cell: (p) => formatDate(p.birthDate) },
+    { header: 'Город', cell: (p) => p.city ?? '—', filter: { kind: 'select', param: 'city', options: cityOptions } },
+    { header: 'Дата рождения', cell: (p) => formatDate(p.birthDate), filter: { kind: 'dateRange', paramFrom: 'birthFrom', paramTo: 'birthTo' } },
     { header: 'Услуга', cell: (p) => (p.services && p.services.length ? p.services.join(', ') : '—') },
   ];
 

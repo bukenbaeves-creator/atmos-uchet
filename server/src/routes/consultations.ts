@@ -6,6 +6,7 @@ import { assertDictionaryValue, ensureDictionaryValue } from '../services/dictio
 import { resolvePatient } from '../services/patient-resolve.service.js';
 import { patientInputSchema, requiredString, optionalString, requiredDate, optionalDate, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
+import { dateRange, eqStr } from '../lib/filters.js';
 import { writeAudit } from '../services/audit.service.js';
 import { asyncHandler, forbidden, notFound } from '../lib/http.js';
 import { serialize } from '../lib/serialize.js';
@@ -97,8 +98,16 @@ const router = makeCrudRouter({
   orderBy: { dateKons: 'desc' },
   buildWhere: (q) => {
     const where: Record<string, unknown> = {};
-    if (typeof q.stage === 'string' && q.stage) where.stage = q.stage;
+    if (eqStr(q.stage)) where.stage = eqStr(q.stage);
+    if (eqStr(q.manager)) where.manager = eqStr(q.manager);
+    if (eqStr(q.doctor)) where.doctor = eqStr(q.doctor);
+    if (eqStr(q.vid)) where.vid = eqStr(q.vid);
+    if (eqStr(q.interestOperation)) where.interestOperation = eqStr(q.interestOperation);
     if (typeof q.patientId === 'string' && q.patientId) where.patientId = Number(q.patientId);
+    const dk = dateRange(q.dateKonsFrom, q.dateKonsTo);
+    if (dk) where.dateKons = dk;
+    const dz = dateRange(q.dateZapisFrom, q.dateZapisTo);
+    if (dz) where.dateZapis = dz;
     return where;
   },
   search: (t) => ({ OR: [...patientSearchOR(t, true), { stage: { contains: t, mode: 'insensitive' } }] }),

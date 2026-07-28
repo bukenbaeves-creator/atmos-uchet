@@ -30,6 +30,10 @@ interface Props<T extends JournalRecord> {
   rowEditable?: (row: T, user: { id: number; role: string } | null) => boolean;
   // Доп. кнопки в шапке (например, «Возврат» в Кассе)
   headerActions?: ReactNode;
+  // Классы для строки (например, подсветка просроченных консультаций без итога)
+  rowClassName?: (row: T) => string;
+  // Ненавязчивое уведомление над таблицей (получает загруженные строки)
+  notice?: (rows: T[]) => ReactNode;
 }
 
 export function canEditRow(row: JournalRecord, user: { id: number; role: string } | null): boolean {
@@ -53,6 +57,8 @@ export function JournalPage<T extends JournalRecord>({
   rowActions,
   rowEditable,
   headerActions,
+  rowClassName,
+  notice,
 }: Props<T>) {
   const { user, isAdmin } = useAuth();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, search: '' });
@@ -137,7 +143,15 @@ export function JournalPage<T extends JournalRecord>({
         <EmptyState>Записей не найдено</EmptyState>
       ) : (
         <>
-          <Table columns={[...columns, actionsColumn]} rows={data.items} onRowClick={onRowClick} />
+          {notice?.(data.items)}
+          <Table
+            columns={[...columns, actionsColumn]}
+            rows={data.items}
+            onRowClick={onRowClick}
+            filters={params}
+            onFilter={setParam}
+            rowClassName={rowClassName}
+          />
           <Pagination
             page={data.page}
             pageSize={data.pageSize}
