@@ -8,21 +8,10 @@ export interface AnalyticsPeriod {
   toExclusive?: Date;
 }
 
-// Ключ месяца в UTC (согласованно с хранением дат из <input type=date>).
-function monthKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
+const NO_OP = 'Без операции'; // списания без привязки к виду операции
 
-interface Bucket {
-  name: string;
-  qty: number;
-  cost: number;
-}
-
-const NO_OP = 'Без операции'; // списания без привязки к операции
-
-// Аналитика расхода материалов по видам операций и по месяцам. Стоимостные
-// показатели (cost/totalCost) включаются только для администратора.
+// Аналитика расхода материалов: расходы по пациентам с указанием вида операции и
+// перечнем материалов. Стоимость (cost/totalCost) — только для администратора.
 export async function expenseAnalytics(period: AnalyticsPeriod, isAdmin: boolean) {
   const dateFilter =
     period.from || period.toExclusive
@@ -31,82 +20,80 @@ export async function expenseAnalytics(period: AnalyticsPeriod, isAdmin: boolean
 
   const items = await prisma.expenseWriteoff.findMany({
     where: { deletedAt: null, patient: { is: { deletedAt: null } }, ...dateFilter },
-    include: { operation: { select: { opType: true } } },
+    include: {
+      patient: { select: { fio: true } },
+      operation: { select: { opType: true } },
+      nomenclature: { select: { nameDisplay: true } },
+    },
   });
 
-  const byOpMap = new Map<string, Bucket>();
-  const byMonthMap = new Map<string, Bucket>();
-  // расход по месяцу в разрезе вида операции (для стека «виды операций × месяцы»)
-  const monthOp = new Map<string, Map<string, { qty: number; cost: number }>>();
-  const positions = new Set<number>();
+  // Группа = пациент + вид операции; внутри — материалы (наименование → количество).
+  interface Group {
+    patient: string;
+    opType: string;
+    qty: number;
+    cost: number;
+    positions: Set<number>;
+    materials: Map<string, number>;
+  }
+  const groups = new Map<string, Group>();
+  const byPatient = new Map<string, { name: string; qty: number; cost: number }>();
+  const patients = new Set<number>();
   let totalQty = 0;
   let totalCost = 0;
-
-  const add = (map: Map<string, Bucket>, key: string, qty: number, cost: number) => {
-    const b = map.get(key) ?? { name: key, qty: 0, cost: 0 };
-    b.qty = round2(b.qty + qty);
-    b.cost = round2(b.cost + cost);
-    map.set(key, b);
-  };
 
   for (const w of items) {
     const qty = num(w.qty);
     const cost = num(w.costTotal);
-    const op = (w.opType ?? w.operation?.opType ?? '').trim() || NO_OP;
+    const opType = (w.opType ?? w.operation?.opType ?? '').trim() || NO_OP;
+    const fio = w.patient.fio;
     totalQty = round2(totalQty + qty);
     totalCost = round2(totalCost + cost);
-    positions.add(w.nomenclatureId);
-    add(byOpMap, op, qty, cost);
-    if (w.date) {
-      const mk = monthKey(new Date(w.date));
-      add(byMonthMap, mk, qty, cost);
-      if (!monthOp.has(mk)) monthOp.set(mk, new Map());
-      const mt = monthOp.get(mk)!;
-      const cur = mt.get(op) ?? { qty: 0, cost: 0 };
-      cur.qty = round2(cur.qty + qty);
-      cur.cost = round2(cur.cost + cost);
-      mt.set(op, cur);
+    patients.add(w.patientId);
+
+    const key = `${w.patientId}|${opType}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { patient: fio, opType, qty: 0, cost: 0, positions: new Set(), materials: new Map() };
+      groups.set(key, g);
     }
+    g.qty = round2(g.qty + qty);
+    g.cost = round2(g.cost + cost);
+    g.positions.add(w.nomenclatureId);
+    g.materials.set(w.nomenclature.nameDisplay, round2((g.materials.get(w.nomenclature.nameDisplay) ?? 0) + qty));
+
+    let bp = byPatient.get(fio);
+    if (!bp) {
+      bp = { name: fio, qty: 0, cost: 0 };
+      byPatient.set(fio, bp);
+    }
+    bp.qty = round2(bp.qty + qty);
+    bp.cost = round2(bp.cost + cost);
   }
 
-  // Основная метрика зависит от роли: админ смотрит себестоимость, медсестра — количество.
-  const metricOf = (b: { qty: number; cost: number }) => (isAdmin ? b.cost : b.qty);
+  const metricOf = (x: { qty: number; cost: number }) => (isAdmin ? x.cost : x.qty);
 
-  // Топ видов операций по метрике; остальные сводим в «Прочее» (чтобы стек читался).
-  const TOP = 6;
-  const opsSorted = [...byOpMap.values()].sort((a, b) => metricOf(b) - metricOf(a));
-  const topNames = opsSorted.slice(0, TOP).map((b) => b.name);
-  const hasOther = opsSorted.length > TOP;
-  const opTypes = hasOther ? [...topNames, 'Прочее'] : topNames;
-  const bucketName = (name: string) => (topNames.includes(name) ? name : 'Прочее');
+  const rows = [...groups.values()]
+    .sort((a, b) => metricOf(b) - metricOf(a) || a.patient.localeCompare(b.patient))
+    .map((g) => {
+      const materials = [...g.materials.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([n, q]) => `${n} ×${q}`)
+        .join(', ');
+      return isAdmin
+        ? { patient: g.patient, opType: g.opType, positions: g.positions.size, qty: g.qty, cost: g.cost, materials }
+        : { patient: g.patient, opType: g.opType, positions: g.positions.size, qty: g.qty, materials };
+    });
 
-  // Пивот для стека: одна строка на месяц, ключи — виды операций, значение — метрика роли.
-  const months = [...byMonthMap.keys()].sort();
-  const pivot = months.map((m) => {
-    const row: Record<string, string | number> = { month: m };
-    for (const t of opTypes) row[t] = 0;
-    for (const [name, v] of monthOp.get(m)!) {
-      const key = bucketName(name);
-      row[key] = round2((row[key] as number) + metricOf(v));
-    }
-    return row;
-  });
-
-  const shapeOp = (b: Bucket) => (isAdmin ? { name: b.name, qty: b.qty, cost: b.cost } : { name: b.name, qty: b.qty });
+  const topPatients = [...byPatient.values()]
+    .sort((a, b) => metricOf(b) - metricOf(a))
+    .slice(0, 10)
+    .map((p) => (isAdmin ? { name: p.name, qty: p.qty, cost: p.cost } : { name: p.name, qty: p.qty }));
 
   return {
     metric: isAdmin ? 'cost' : 'qty',
-    kpi: {
-      writeoffs: items.length,
-      positions: positions.size,
-      totalQty,
-      ...(isAdmin ? { totalCost } : {}),
-    },
-    byOperationType: opsSorted.map(shapeOp),
-    byMonth: [...byMonthMap.values()]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((b) => (isAdmin ? { month: b.name, qty: b.qty, cost: b.cost } : { month: b.name, qty: b.qty })),
-    opTypes,
-    pivot,
+    kpi: { writeoffs: items.length, patients: patients.size, totalQty, ...(isAdmin ? { totalCost } : {}) },
+    topPatients,
+    rows,
   };
 }
