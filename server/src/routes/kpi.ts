@@ -21,7 +21,8 @@ router.get(
 );
 
 const ratesSchema = z.object({
-  consultation: z.coerce.number().nonnegative(),
+  consultationOnline: z.coerce.number().nonnegative(),
+  consultationOffline: z.coerce.number().nonnegative(),
   operation: z.coerce.number().nonnegative(),
 });
 

@@ -85,15 +85,16 @@ export function Kpi() {
 interface Row {
   id: number;
   manager: string;
-  consultations: number;
+  consultationsOnline: number;
+  consultationsOffline: number;
   operations: number;
   amount: number;
 }
 interface Report {
   label: string;
-  rates: { consultation: number; operation: number };
+  rates: { consultationOnline: number; consultationOffline: number; operation: number };
   rows: Omit<Row, 'id'>[];
-  totals: { consultations: number; operations: number; amount: number };
+  totals: { consultationsOnline: number; consultationsOffline: number; operations: number; amount: number };
 }
 
 function RewardTab({ from, to }: { from: string; to: string }) {
@@ -105,9 +106,9 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     queryFn: () => apiGet<Report>(`/kpi/report?from=${from}&to=${to}`),
   });
 
-  const [editRates, setEditRates] = useState<{ consultation: string; operation: string } | null>(null);
+  const [editRates, setEditRates] = useState<{ consultationOnline: string; consultationOffline: string; operation: string } | null>(null);
   const saveRates = useMutation({
-    mutationFn: (r: { consultation: number; operation: number }) => apiPut('/kpi/rates', r),
+    mutationFn: (r: { consultationOnline: number; consultationOffline: number; operation: number }) => apiPut('/kpi/rates', r),
     onSuccess: () => {
       setEditRates(null);
       qc.invalidateQueries({ queryKey: ['kpi-report'] });
@@ -117,8 +118,9 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   const rows: Row[] = (data?.rows ?? []).map((r, i) => ({ ...r, id: i + 1 }));
   const columns: Column<Row>[] = [
     { header: 'Менеджер', cell: (r) => <span className="font-medium">{r.manager}</span> },
-    { header: 'Записей на консультацию', align: 'right', cell: (r) => formatNumber(r.consultations) },
-    { header: 'Записей на операцию', align: 'right', cell: (r) => formatNumber(r.operations) },
+    { header: 'Консультации онлайн', align: 'right', cell: (r) => formatNumber(r.consultationsOnline) },
+    { header: 'Консультации офлайн', align: 'right', cell: (r) => formatNumber(r.consultationsOffline) },
+    { header: 'Операции', align: 'right', cell: (r) => formatNumber(r.operations) },
     {
       header: 'Вознаграждение (KPI)',
       align: 'right',
@@ -133,8 +135,8 @@ function RewardTab({ from, to }: { from: string; to: string }) {
           <div className="text-sm">
             <span className="font-semibold text-slate-700">Ставки KPI</span>
             <span className="ml-3 text-slate-500">
-              за консультацию: <b>{formatMoney(data?.rates.consultation ?? 0)}</b> · за операцию:{' '}
-              <b>{formatMoney(data?.rates.operation ?? 0)}</b>
+              консультация онлайн: <b>{formatMoney(data?.rates.consultationOnline ?? 0)}</b> · консультация офлайн:{' '}
+              <b>{formatMoney(data?.rates.consultationOffline ?? 0)}</b> · операция: <b>{formatMoney(data?.rates.operation ?? 0)}</b>
             </span>
           </div>
           {isAdmin && !editRates && (
@@ -142,7 +144,8 @@ function RewardTab({ from, to }: { from: string; to: string }) {
               className="btn-ghost"
               onClick={() =>
                 setEditRates({
-                  consultation: String(data?.rates.consultation ?? 0),
+                  consultationOnline: String(data?.rates.consultationOnline ?? 0),
+                  consultationOffline: String(data?.rates.consultationOffline ?? 0),
                   operation: String(data?.rates.operation ?? 0),
                 })
               }
@@ -154,9 +157,15 @@ function RewardTab({ from, to }: { from: string; to: string }) {
         {editRates && (
           <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
             <div>
-              <label className="label">За консультацию</label>
+              <label className="label">Консультация онлайн</label>
               <div className="w-40">
-                <MoneyInput value={editRates.consultation} onChange={(v) => setEditRates((s) => ({ ...s!, consultation: v }))} />
+                <MoneyInput value={editRates.consultationOnline} onChange={(v) => setEditRates((s) => ({ ...s!, consultationOnline: v }))} />
+              </div>
+            </div>
+            <div>
+              <label className="label">Консультация офлайн</label>
+              <div className="w-40">
+                <MoneyInput value={editRates.consultationOffline} onChange={(v) => setEditRates((s) => ({ ...s!, consultationOffline: v }))} />
               </div>
             </div>
             <div>
@@ -168,7 +177,13 @@ function RewardTab({ from, to }: { from: string; to: string }) {
             <button
               className="btn-primary"
               disabled={saveRates.isPending}
-              onClick={() => saveRates.mutate({ consultation: Number(editRates.consultation || 0), operation: Number(editRates.operation || 0) })}
+              onClick={() =>
+                saveRates.mutate({
+                  consultationOnline: Number(editRates.consultationOnline || 0),
+                  consultationOffline: Number(editRates.consultationOffline || 0),
+                  operation: Number(editRates.operation || 0),
+                })
+              }
             >
               Сохранить
             </button>
@@ -189,8 +204,13 @@ function RewardTab({ from, to }: { from: string; to: string }) {
               <div className="mt-1 text-xl font-bold">{data.label}</div>
             </div>
             <div className="card">
-              <div className="text-xs uppercase text-slate-400">Консультаций</div>
-              <div className="mt-1 text-xl font-bold">{formatNumber(data.totals.consultations)}</div>
+              <div className="text-xs uppercase text-slate-400">Консультаций (онлайн/офлайн)</div>
+              <div className="mt-1 text-xl font-bold">
+                {formatNumber(data.totals.consultationsOnline + data.totals.consultationsOffline)}
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  {formatNumber(data.totals.consultationsOnline)} / {formatNumber(data.totals.consultationsOffline)}
+                </span>
+              </div>
             </div>
             <div className="card">
               <div className="text-xs uppercase text-slate-400">Операций</div>

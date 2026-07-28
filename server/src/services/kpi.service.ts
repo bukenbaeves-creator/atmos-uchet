@@ -2,32 +2,33 @@ import { prisma } from '../lib/prisma.js';
 import { KPI_DEFAULTS } from '../constants.js';
 
 export interface KpiRates {
-  consultation: number;
+  consultationOnline: number;
+  consultationOffline: number;
   operation: number;
 }
 
+// Ставки: онлайн/офлайн консультация + операция. Если новые ключи ещё не заданы —
+// берём старую единую ставку консультации (kpi_consultation_rate) как значение по
+// умолчанию для обеих, чтобы при переходе ничего не сбросилось.
 export async function getRates(): Promise<KpiRates> {
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ['kpi_consultation_rate', 'kpi_operation_rate'] } },
+    where: { key: { in: ['kpi_consultation_online_rate', 'kpi_consultation_offline_rate', 'kpi_consultation_rate', 'kpi_operation_rate'] } },
   });
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const legacy = map.kpi_consultation_rate ?? KPI_DEFAULTS.kpi_consultation_rate;
   return {
-    consultation: Number(map.kpi_consultation_rate ?? KPI_DEFAULTS.kpi_consultation_rate),
+    consultationOnline: Number(map.kpi_consultation_online_rate ?? legacy),
+    consultationOffline: Number(map.kpi_consultation_offline_rate ?? legacy),
     operation: Number(map.kpi_operation_rate ?? KPI_DEFAULTS.kpi_operation_rate),
   };
 }
 
 export async function setRates(rates: KpiRates): Promise<KpiRates> {
-  await prisma.setting.upsert({
-    where: { key: 'kpi_consultation_rate' },
-    update: { value: String(rates.consultation) },
-    create: { key: 'kpi_consultation_rate', value: String(rates.consultation) },
-  });
-  await prisma.setting.upsert({
-    where: { key: 'kpi_operation_rate' },
-    update: { value: String(rates.operation) },
-    create: { key: 'kpi_operation_rate', value: String(rates.operation) },
-  });
+  const upsert = (key: string, value: number) =>
+    prisma.setting.upsert({ where: { key }, update: { value: String(value) }, create: { key, value: String(value) } });
+  await upsert('kpi_consultation_online_rate', rates.consultationOnline);
+  await upsert('kpi_consultation_offline_rate', rates.consultationOffline);
+  await upsert('kpi_operation_rate', rates.operation);
   return getRates();
 }
 
@@ -78,53 +79,50 @@ export async function kpiReportRange(fromStr: string, toStr: string) {
 async function computeReward(from: Date, toExclusive: Date, label: string) {
   const rates = await getRates();
 
-  // Записи удалённых пациентов не учитываем в KPI.
-  const [cons, ops] = await Promise.all([
-    prisma.consultation.groupBy({
-      by: ['manager'],
-      where: {
-        deletedAt: null,
-        manager: { not: null },
-        patient: { is: { deletedAt: null } },
-        dateKons: { gte: from, lt: toExclusive },
-      },
-      _count: { _all: true },
-    }),
+  const consWhere = { deletedAt: null, manager: { not: null }, patient: { is: { deletedAt: null } }, dateKons: { gte: from, lt: toExclusive } };
+  // Записи удалённых пациентов не учитываем. Онлайн — vid='Онлайн', офлайн — все прочие.
+  const [consTotal, consOnline, ops] = await Promise.all([
+    prisma.consultation.groupBy({ by: ['manager'], where: consWhere, _count: { _all: true } }),
+    prisma.consultation.groupBy({ by: ['manager'], where: { ...consWhere, vid: 'Онлайн' }, _count: { _all: true } }),
     prisma.operation.groupBy({
       by: ['manager'],
-      where: {
-        deletedAt: null,
-        manager: { not: null },
-        patient: { is: { deletedAt: null } },
-        dateOp: { gte: from, lt: toExclusive },
-      },
+      where: { deletedAt: null, manager: { not: null }, patient: { is: { deletedAt: null } }, dateOp: { gte: from, lt: toExclusive } },
       _count: { _all: true },
     }),
   ]);
 
-  const byManager = new Map<string, { manager: string; consultations: number; operations: number }>();
+  const byManager = new Map<string, { manager: string; total: number; online: number; operations: number }>();
   const ensure = (m: string) => {
-    if (!byManager.has(m)) byManager.set(m, { manager: m, consultations: 0, operations: 0 });
+    if (!byManager.has(m)) byManager.set(m, { manager: m, total: 0, online: 0, operations: 0 });
     return byManager.get(m)!;
   };
-  for (const c of cons) if (c.manager) ensure(c.manager).consultations = c._count._all;
+  for (const c of consTotal) if (c.manager) ensure(c.manager).total = c._count._all;
+  for (const c of consOnline) if (c.manager) ensure(c.manager).online = c._count._all;
   for (const o of ops) if (o.manager) ensure(o.manager).operations = o._count._all;
 
   const rows = [...byManager.values()]
-    .map((r) => ({
-      ...r,
-      amount: r.consultations * rates.consultation + r.operations * rates.operation,
-    }))
+    .map((r) => {
+      const consultationsOnline = r.online;
+      const consultationsOffline = Math.max(0, r.total - r.online);
+      return {
+        manager: r.manager,
+        consultationsOnline,
+        consultationsOffline,
+        operations: r.operations,
+        amount: consultationsOnline * rates.consultationOnline + consultationsOffline * rates.consultationOffline + r.operations * rates.operation,
+      };
+    })
     .sort((a, b) => b.amount - a.amount);
 
   const totals = rows.reduce(
     (acc, r) => {
-      acc.consultations += r.consultations;
+      acc.consultationsOnline += r.consultationsOnline;
+      acc.consultationsOffline += r.consultationsOffline;
       acc.operations += r.operations;
       acc.amount += r.amount;
       return acc;
     },
-    { consultations: 0, operations: 0, amount: 0 },
+    { consultationsOnline: 0, consultationsOffline: 0, operations: 0, amount: 0 },
   );
 
   return {
