@@ -1,13 +1,12 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/rbac.js';
+import { requireAdmin } from '../middleware/rbac.js';
 import { expenseAnalytics, type AnalyticsPeriod } from '../services/expense-analytics.service.js';
 
-// Аналитика расхода материалов. Доступна медсестре и администратору; стоимость —
-// только администратору (усечена в сервисе по роли).
+// Аналитика расхода материалов — только администратору.
 const router = Router();
-router.use(requireAuth, requireRole('nurse', 'admin'));
+router.use(requireAuth, requireAdmin);
 
 // Границы периода в UTC (полуоткрытый интервал), как в денежных отчётах.
 function parsePeriod(q: Record<string, unknown>): AnalyticsPeriod {

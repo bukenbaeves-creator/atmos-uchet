@@ -77,7 +77,7 @@ export function App() {
         <Route path="/nomenclature" element={<Nomenclature />} />
         <Route path="/revisions" element={<RequireRole roles={['admin', 'nurse']}><Revisions /></RequireRole>} />
         <Route path="/revisions/:id" element={<RequireRole roles={['admin', 'nurse']}><RevisionDetail /></RequireRole>} />
-        <Route path="/expense-analytics" element={<ExpenseAnalytics />} />
+        <Route path="/expense-analytics" element={<RequireAdmin><ExpenseAnalytics /></RequireAdmin>} />
         <Route path="/receipts" element={<RequireRole roles={['admin', 'nurse']}><Receipts /></RequireRole>} />
         {/* Денежные/продажные разделы — скрыты от медсестры */}
         <Route path="/consultations" element={<RequireRole roles={SALES}><Consultations /></RequireRole>} />
