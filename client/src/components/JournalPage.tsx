@@ -4,6 +4,7 @@ import { useList, useCrudMutations } from '../api/hooks';
 import { useAuth } from '../lib/auth';
 import { exportUrl } from '../api/client';
 import { EntityForm, type Field } from './EntityForm';
+import { ExportButton } from './ExportButton';
 import { Table, type Column } from './Table';
 import { Modal, PageHeader, Pagination, Spinner, EmptyState } from './ui';
 
@@ -113,11 +114,7 @@ export function JournalPage<T extends JournalRecord>({
         actions={
           <>
             {headerActions}
-            {exportJournal && (
-              <a className="btn-ghost" href={exportUrl(exportJournal)}>
-                Экспорт в Excel
-              </a>
-            )}
+            {exportJournal && <ExportButton url={exportUrl(exportJournal)} filename={`${exportJournal}.xlsx`} />}
             <button className="btn-primary" onClick={openCreate}>
               + {newButtonLabel}
             </button>

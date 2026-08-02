@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, expenseExportUrl } from '../api/client';
+import { ExportButton } from '../components/ExportButton';
 import { formatDate, isExpired } from '../lib/format';
 import { PageHeader, Spinner, EmptyState, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
@@ -94,9 +95,7 @@ export function Stock() {
         title="Склад · остатки"
         subtitle="Остаток по каждой позиции. Стоимость остатка видит только администратор."
         actions={
-          <a className="btn-ghost" href={expenseExportUrl(exportReport)}>
-            Экспорт в Excel
-          </a>
+          <ExportButton url={expenseExportUrl(exportReport)} filename={`${exportReport}.xlsx`} />
         }
       />
 

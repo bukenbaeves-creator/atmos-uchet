@@ -41,6 +41,22 @@ export const apiPatch = <T>(path: string, data?: unknown) =>
   request<T>(path, { method: 'PATCH', body: data ? JSON.stringify(data) : undefined });
 export const apiDelete = <T>(path: string) => request<T>(path, { method: 'DELETE' });
 
+// Контролируемая выгрузка файла: один запрос (с кукой), один файл. В отличие от
+// простой ссылки <a href> даёт обратную связь и не плодит повторные загрузки.
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new ApiError(res.status, `Не удалось выгрузить файл (${res.status})`);
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
+
 export const exportUrl = (journal: string) => `${BASE}/api/export/${journal}.xlsx`;
 // Выгрузки модуля расходов (stock | purchase-list | expiry | writeoffs)
 export const expenseExportUrl = (report: string) => `${BASE}/api/expense-export/${report}.xlsx`;

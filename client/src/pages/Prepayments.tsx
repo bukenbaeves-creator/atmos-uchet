@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, exportUrl } from '../api/client';
+import { ExportButton } from '../components/ExportButton';
 import { formatDate, formatMoney } from '../lib/format';
 import { PageHeader, Spinner, Badge, EmptyState } from '../components/ui';
 import { Table, type Column } from '../components/Table';
@@ -64,9 +65,7 @@ export function Prepayments() {
         title="Предоплаты и остатки"
         subtitle="Все показатели вычисляются автоматически из операций и платежей."
         actions={
-          <a className="btn-ghost" href={exportUrl('operations')}>
-            Экспорт в Excel
-          </a>
+          <ExportButton url={exportUrl('operations')} filename="operations.xlsx" />
         }
       />
 
