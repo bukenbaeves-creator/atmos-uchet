@@ -15,7 +15,7 @@ services:
   - type: web
     name: atmos
     runtime: docker
-    dockerfilePath: ./Dockerfile.prod
+    dockerfilePath: ./Dockerfile
     region: frankfurt
     plan: free # free засыпает при простое; для клиники — платный
     healthCheckPath: /api/health
