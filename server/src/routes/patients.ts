@@ -6,7 +6,7 @@ import { asyncHandler, badRequest, notFound } from '../lib/http.js';
 import { requireAdmin } from '../middleware/rbac.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { normalizePhone } from '../lib/phone.js';
-import { computeOperation } from '../services/compute.js';
+import { computeOperation, round2 } from '../services/compute.js';
 import { serialize } from '../lib/serialize.js';
 import { patientSearchOR } from '../lib/search.js';
 import { dateRange, eqStr } from '../lib/filters.js';
@@ -119,7 +119,17 @@ router.get(
       ...serialize(op),
       ...computeOperation(op),
     }));
-    const totalBalance = operations.reduce((s, o) => s + o.balance, 0);
+    const totalBalance = round2(operations.reduce((s, o) => s + o.balance, 0));
+
+    // Сверка по деньгам пациента (наглядно объясняет, почему сумма платежей может
+    // не совпадать с «оплачено» по операциям): получено всего, из них на операции,
+    // на прочие услуги (платежи без привязки к операции), к оплате и долг.
+    const received = round2(
+      patient.payments.reduce((s, p) => s + (p.direction === 'refund' ? -Number(p.amount) : Number(p.amount)), 0),
+    );
+    const toOperations = round2(operations.reduce((s, o) => s + o.paid, 0));
+    const totalDue = round2(operations.reduce((s, o) => s + o.totalDue, 0));
+    const summary = { received, toOperations, toOther: round2(received - toOperations), totalDue, totalBalance };
 
     res.json({
       patient: serialize({ ...patient, operations: undefined, consultations: undefined, payments: undefined }),
@@ -127,6 +137,7 @@ router.get(
       operations,
       payments: serialize(patient.payments),
       totalBalance,
+      summary,
     });
   }),
 );

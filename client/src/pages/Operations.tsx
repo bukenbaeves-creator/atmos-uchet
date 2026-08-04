@@ -35,6 +35,7 @@ const fields: Field[] = [
   { name: 'anesthesiaCost', label: 'Стоимость наркоза', type: 'money' },
   { name: 'zapis', label: 'Запись', type: 'select', dict: 'zapis', required: true },
   { name: 'contractSigned', label: 'Договор подписан', type: 'checkbox' },
+  { name: 'confirmDuplicate', label: 'Разрешить дубль (такая операция уже есть)', type: 'checkbox' },
   { name: 'note', label: 'Примечание', type: 'textarea', span: 2 },
 ];
 

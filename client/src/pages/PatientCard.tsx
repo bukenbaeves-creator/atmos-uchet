@@ -16,8 +16,16 @@ interface CardData {
     balance: number;
     fullyPaid: boolean;
   }[];
-  payments: { id: number; date: string | null; serviceType: string | null; amount: number; payMethod: string | null }[];
+  payments: {
+    id: number;
+    date: string | null;
+    serviceType: string | null;
+    amount: number;
+    payMethod: string | null;
+    operationId: number | null;
+  }[];
   totalBalance: number;
+  summary: { received: number; toOperations: number; toOther: number; totalDue: number; totalBalance: number };
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -48,6 +56,9 @@ export function PatientCard() {
       </div>
     );
   const p = data.patient;
+  // Карта «id операции → короткая подпись» для привязки платежей
+  const opById = new Map(data.operations.map((o) => [o.id, `${o.opType ?? '—'} · ${formatDate(o.dateOp)}`]));
+  const s = data.summary;
 
   return (
     <div>
@@ -87,6 +98,38 @@ export function PatientCard() {
         <div className="card">
           <div className="text-xs uppercase text-slate-400">Платежей</div>
           <div className="mt-1 text-2xl font-bold">{data.payments.length}</div>
+        </div>
+      </div>
+
+      <div className="mb-4 card">
+        <div className="mb-3 text-sm font-semibold text-slate-700">Сверка по деньгам</div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm lg:grid-cols-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+            <span className="text-slate-500">Получено всего</span>
+            <span className="font-semibold tabular-nums">{formatMoney(s.received)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+            <span className="text-slate-500">На операции</span>
+            <span className="tabular-nums text-emerald-600">{formatMoney(s.toOperations)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+            <span className="text-slate-500">Прочие услуги</span>
+            <span className="tabular-nums">{formatMoney(s.toOther)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+            <span className="text-slate-500">К оплате по операциям</span>
+            <span className="tabular-nums">{formatMoney(s.totalDue)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+            <span className="text-slate-500">Долг по операциям</span>
+            <span className={`font-semibold tabular-nums ${s.totalBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+              {formatMoney(s.totalBalance)}
+            </span>
+          </div>
+        </div>
+        <div className="mt-3 text-xs text-slate-400">
+          «Получено всего» = «На операции» + «Прочие услуги». Прочие услуги (консультации, анализы) не привязаны к
+          операциям, поэтому в долг по операциям не входят.
         </div>
       </div>
 
@@ -144,6 +187,11 @@ export function PatientCard() {
                 <li key={pay.id} className="flex items-center justify-between py-2">
                   <span>
                     {formatDate(pay.date)} · {pay.serviceType ?? '—'} · {pay.payMethod ?? '—'}
+                    {pay.operationId && opById.has(pay.operationId) ? (
+                      <span className="text-slate-500"> · операция: {opById.get(pay.operationId)}</span>
+                    ) : (
+                      <span className="text-slate-400"> · без привязки к операции</span>
+                    )}
                   </span>
                   <span className="font-semibold tabular-nums">{formatMoney(pay.amount)}</span>
                 </li>

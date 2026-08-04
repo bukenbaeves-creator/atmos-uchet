@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
+import { ApiError } from '../lib/http.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { computeOperation } from '../services/compute.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
@@ -21,6 +22,9 @@ const schema = z.object({
   anesthesiaCost: moneyAmount().default(0),
   contractSigned: z.coerce.boolean().default(false),
   note: optionalString(),
+  // Разрешить создать операцию, даже если у пациента уже есть такая же на эту дату
+  // (галочка в форме). Не пишется в БД — только гейт для проверки на дубль.
+  confirmDuplicate: z.coerce.boolean().optional(),
 });
 
 // Оператор правит свою операцию до «дата операции + 1 день» включительно
@@ -71,8 +75,23 @@ const router = makeCrudRouter({
   },
   transform: (row) => ({ ...row, ...computeOperation(row as never) }),
   prepareData: async (data, req, ctx) => {
-    const { patient, ...rest } = data as Record<string, unknown> & { patient: never };
+    const { patient, confirmDuplicate, ...rest } = data as Record<string, unknown> & { patient: never };
     const patientId = await resolvePatient(patient, req, ctx.tx);
+    // Защита от дубля: при создании — если у пациента уже есть операция того же
+    // вида на ту же дату, требуем явного подтверждения «Разрешить дубль».
+    if (ctx.mode === 'create' && !confirmDuplicate && rest.dateOp) {
+      const day = new Date(rest.dateOp as Date).toISOString().slice(0, 10);
+      const range = dateRange(day, day);
+      const existing = await ctx.tx.operation.findFirst({
+        where: { patientId, opType: rest.opType as string, deletedAt: null, ...(range ? { dateOp: range } : {}) },
+      });
+      if (existing) {
+        throw new ApiError(
+          409,
+          `У пациента уже есть операция «${rest.opType}» на эту дату. Если это не дубль — отметьте «Разрешить дубль» и сохраните снова.`,
+        );
+      }
+    }
     return { ...rest, patientId };
   },
 });
