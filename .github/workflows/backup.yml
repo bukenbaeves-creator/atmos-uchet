@@ -1,0 +1,25 @@
+# Ежедневная резервная копия БД на почту.
+# Дёргает защищённый токеном эндпоинт приложения — тот собирает бэкап и шлёт письмо.
+# Работает, даже когда сервис на Render «спит» (запрос его разбудит).
+#
+# Нужны секреты репозитория (Settings → Secrets and variables → Actions):
+#   APP_URL           — адрес сервиса, например https://atmos.onrender.com
+#   BACKUP_CRON_TOKEN — тот же токен, что задан в переменных окружения на Render
+#
+# Примечание: расписание GitHub Actions может запускаться с задержкой и отключается
+# после ~60 дней без активности в репозитории.
+name: daily-backup
+
+on:
+  schedule:
+    - cron: '0 19 * * *' # 19:00 UTC = 00:00 в Алматы (UTC+5) — ночью, при низкой нагрузке
+  workflow_dispatch: {} # позволяет запустить вручную из вкладки Actions
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backup email
+        run: |
+          curl -fS -X POST \
+            "${{ secrets.APP_URL }}/api/backup/cron?token=${{ secrets.BACKUP_CRON_TOKEN }}"

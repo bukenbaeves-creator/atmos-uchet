@@ -69,6 +69,7 @@ const ADMIN_SECTION: Section = {
   items: [
     { to: '/audit', label: 'Аудит', icon: '🕵️' },
     { to: '/admin', label: 'Пользователи', icon: '⚙️' },
+    { to: '/backup', label: 'Резервные копии', icon: '💾' },
   ],
 };
 

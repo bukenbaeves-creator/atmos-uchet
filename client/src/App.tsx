@@ -14,6 +14,7 @@ import { Kpi } from './pages/Kpi';
 import { ErrorCheck } from './pages/ErrorCheck';
 import { Audit } from './pages/Audit';
 import { Admin } from './pages/Admin';
+import { Backup } from './pages/Backup';
 import { Dictionaries } from './pages/Dictionaries';
 import { Writeoffs } from './pages/Writeoffs';
 import { Stock } from './pages/Stock';
@@ -101,6 +102,14 @@ export function App() {
           element={
             <RequireAdmin>
               <Admin />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/backup"
+          element={
+            <RequireAdmin>
+              <Backup />
             </RequireAdmin>
           }
         />

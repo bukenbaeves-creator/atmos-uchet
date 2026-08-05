@@ -62,6 +62,8 @@ export const exportUrl = (journal: string) => `${BASE}/api/export/${journal}.xls
 export const expenseExportUrl = (report: string) => `${BASE}/api/expense-export/${report}.xlsx`;
 // Шаблон для импорта прихода
 export const receiptTemplateUrl = () => `${BASE}/api/receipts/template.xlsx`;
+// Скачивание резервной копии БД (JSON)
+export const backupDownloadUrl = () => `${BASE}/api/backup/download`;
 
 // Загрузка файла (multipart) — Content-Type ставит браузер сам
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
