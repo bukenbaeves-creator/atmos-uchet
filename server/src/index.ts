@@ -105,8 +105,24 @@ app.use('/api/backup', backupRouter);
 // В dev папки public нет — блок пропускается, клиент обслуживает Vite.
 const publicDir = path.resolve(process.cwd(), 'public');
 if (fs.existsSync(publicDir)) {
-  app.use(express.static(publicDir));
-  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        // index.html не кэшируем — браузер всегда берёт свежий манифест бандлов,
+        // поэтому новые версии подхватываются сразу после деплоя. Хэшированные
+        // ассеты (/assets/*) кэшируем надолго: их имена меняются при каждой сборке.
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    }),
+  );
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.set('Cache-Control', 'no-cache'); // SPA-fallback тоже отдаёт свежий index.html
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
 }
 
 app.use(errorHandler);
