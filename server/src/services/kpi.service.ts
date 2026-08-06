@@ -76,42 +76,63 @@ export async function kpiReportRange(fromStr: string, toStr: string) {
 }
 
 // Общий расчёт вознаграждения по менеджерам за [from, toExclusive).
+// В расчёт попадают только УЖЕ СОСТОЯВШИЕСЯ события (дата <= сейчас) и только
+// консультации с заполненным итогом (stage). Консультации без итога исключаются
+// (мотивация заполнять итог), но возвращаются отдельным списком для уведомления.
 async function computeReward(from: Date, toExclusive: Date, label: string) {
   const rates = await getRates();
+  const now = new Date();
 
-  const consWhere = { deletedAt: null, manager: { not: null }, patient: { is: { deletedAt: null } }, dateKons: { gte: from, lt: toExclusive } };
-  // Записи удалённых пациентов не учитываем. Онлайн — vid='Онлайн', офлайн — все прочие.
-  const [consTotal, consOnline, ops] = await Promise.all([
-    prisma.consultation.groupBy({ by: ['manager'], where: consWhere, _count: { _all: true } }),
-    prisma.consultation.groupBy({ by: ['manager'], where: { ...consWhere, vid: 'Онлайн' }, _count: { _all: true } }),
-    prisma.operation.groupBy({
-      by: ['manager'],
-      where: { deletedAt: null, manager: { not: null }, patient: { is: { deletedAt: null } }, dateOp: { gte: from, lt: toExclusive } },
-      _count: { _all: true },
+  const patientSel = { patient: { select: { fio: true } } } as const;
+  const [consAll, opsAll] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        deletedAt: null,
+        manager: { not: null },
+        patient: { is: { deletedAt: null } },
+        dateKons: { gte: from, lt: toExclusive, lte: now },
+      },
+      include: patientSel,
+      orderBy: { dateKons: 'asc' },
+    }),
+    prisma.operation.findMany({
+      where: {
+        deletedAt: null,
+        manager: { not: null },
+        patient: { is: { deletedAt: null } },
+        dateOp: { gte: from, lt: toExclusive, lte: now },
+      },
+      include: patientSel,
+      orderBy: { dateOp: 'asc' },
     }),
   ]);
 
-  const byManager = new Map<string, { manager: string; total: number; online: number; operations: number }>();
+  const hasStage = (s: string | null) => !!s && s.trim() !== '';
+  const countedCons = consAll.filter((c) => hasStage(c.stage));
+  const excludedCons = consAll.filter((c) => !hasStage(c.stage));
+
+  // Счётчики по менеджеру: онлайн (vid='Онлайн') / офлайн / операции.
+  const byManager = new Map<string, { manager: string; online: number; offline: number; operations: number }>();
   const ensure = (m: string) => {
-    if (!byManager.has(m)) byManager.set(m, { manager: m, total: 0, online: 0, operations: 0 });
+    if (!byManager.has(m)) byManager.set(m, { manager: m, online: 0, offline: 0, operations: 0 });
     return byManager.get(m)!;
   };
-  for (const c of consTotal) if (c.manager) ensure(c.manager).total = c._count._all;
-  for (const c of consOnline) if (c.manager) ensure(c.manager).online = c._count._all;
-  for (const o of ops) if (o.manager) ensure(o.manager).operations = o._count._all;
+  for (const c of countedCons) {
+    if (!c.manager) continue;
+    const r = ensure(c.manager);
+    if (c.vid === 'Онлайн') r.online += 1;
+    else r.offline += 1;
+  }
+  for (const o of opsAll) if (o.manager) ensure(o.manager).operations += 1;
 
   const rows = [...byManager.values()]
-    .map((r) => {
-      const consultationsOnline = r.online;
-      const consultationsOffline = Math.max(0, r.total - r.online);
-      return {
-        manager: r.manager,
-        consultationsOnline,
-        consultationsOffline,
-        operations: r.operations,
-        amount: consultationsOnline * rates.consultationOnline + consultationsOffline * rates.consultationOffline + r.operations * rates.operation,
-      };
-    })
+    .map((r) => ({
+      manager: r.manager,
+      consultationsOnline: r.online,
+      consultationsOffline: r.offline,
+      operations: r.operations,
+      amount: r.online * rates.consultationOnline + r.offline * rates.consultationOffline + r.operations * rates.operation,
+    }))
     .sort((a, b) => b.amount - a.amount);
 
   const totals = rows.reduce(
@@ -125,6 +146,38 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     { consultationsOnline: 0, consultationsOffline: 0, operations: 0, amount: 0 },
   );
 
+  // Расшифровка: конкретные консультации/операции, попавшие в расчёт, и заявки без итога.
+  const consultations = countedCons.map((c) => ({
+    id: c.id,
+    manager: c.manager,
+    patientFio: c.patient?.fio ?? null,
+    dateKons: c.dateKons?.toISOString() ?? null,
+    vid: c.vid,
+    interestOperation: c.interestOperation,
+    doctor: c.doctor,
+    stage: c.stage,
+    dateZapis: c.dateZapis?.toISOString() ?? null,
+    amount: c.amount != null ? Number(c.amount) : null,
+  }));
+  const operations = opsAll.map((o) => ({
+    id: o.id,
+    manager: o.manager,
+    patientFio: o.patient?.fio ?? null,
+    dateOp: o.dateOp?.toISOString() ?? null,
+    opType: o.opType,
+    surgeon: o.surgeon,
+    cost: o.cost != null ? Number(o.cost) : null,
+  }));
+  const excludedConsultations = excludedCons.map((c) => ({
+    id: c.id,
+    manager: c.manager,
+    patientFio: c.patient?.fio ?? null,
+    dateKons: c.dateKons?.toISOString() ?? null,
+    interestOperation: c.interestOperation,
+    doctor: c.doctor,
+    dateZapis: c.dateZapis?.toISOString() ?? null,
+  }));
+
   return {
     label,
     from: from.toISOString(),
@@ -132,5 +185,9 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     rates,
     rows,
     totals,
+    consultations,
+    operations,
+    excludedConsultations,
+    excludedNoStageCount: excludedConsultations.length,
   };
 }

@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { apiGet, apiPut } from '../api/client';
-import { formatMoney, formatNumber } from '../lib/format';
+import { formatMoney, formatNumber, formatDate } from '../lib/format';
 import { useAuth } from '../lib/auth';
 import { useDictionaries } from '../lib/dictionaries';
-import { PageHeader, Spinner } from '../components/ui';
+import { PageHeader, Spinner, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { MoneyInput } from '../components/MoneyInput';
 
@@ -90,11 +90,46 @@ interface Row {
   operations: number;
   amount: number;
 }
+// Строки расшифровки (детализация того, что попало в расчёт)
+interface ConsRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  dateKons: string | null;
+  vid: string | null;
+  interestOperation: string | null;
+  doctor: string | null;
+  stage: string | null;
+  dateZapis: string | null;
+  amount: number | null;
+}
+interface OpRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  dateOp: string | null;
+  opType: string | null;
+  surgeon: string | null;
+  cost: number | null;
+}
+interface ExclRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  dateKons: string | null;
+  interestOperation: string | null;
+  doctor: string | null;
+  dateZapis: string | null;
+}
 interface Report {
   label: string;
   rates: { consultationOnline: number; consultationOffline: number; operation: number };
   rows: Omit<Row, 'id'>[];
   totals: { consultationsOnline: number; consultationsOffline: number; operations: number; amount: number };
+  consultations: ConsRow[];
+  operations: OpRow[];
+  excludedConsultations: ExclRow[];
+  excludedNoStageCount: number;
 }
 
 function RewardTab({ from, to }: { from: string; to: string }) {
@@ -115,6 +150,9 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     },
   });
 
+  // Клиентский фильтр расшифровки по менеджеру (списки могут быть длинными)
+  const [managerFilter, setManagerFilter] = useState('');
+
   const rows: Row[] = (data?.rows ?? []).map((r, i) => ({ ...r, id: i + 1 }));
   const columns: Column<Row>[] = [
     { header: 'Менеджер', cell: (r) => <span className="font-medium">{r.manager}</span> },
@@ -126,6 +164,49 @@ function RewardTab({ from, to }: { from: string; to: string }) {
       align: 'right',
       cell: (r) => <span className="font-semibold text-emerald-600">{formatMoney(r.amount)}</span>,
     },
+  ];
+
+  // Список менеджеров, встречающихся в расшифровке, — для фильтра
+  const managers = Array.from(
+    new Set(
+      [...(data?.consultations ?? []), ...(data?.operations ?? []), ...(data?.excludedConsultations ?? [])]
+        .map((r) => r.manager)
+        .filter((m): m is string => !!m),
+    ),
+  ).sort((a, b) => a.localeCompare(b, 'ru'));
+  const byMgr = <T extends { manager: string | null }>(list: T[]) =>
+    managerFilter ? list.filter((r) => r.manager === managerFilter) : list;
+
+  const consList = byMgr(data?.consultations ?? []);
+  const opsList = byMgr(data?.operations ?? []);
+  const exclList = byMgr(data?.excludedConsultations ?? []);
+
+  const consColumns: Column<ConsRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
+    { header: 'Вид', cell: (r) => r.vid ?? '—' },
+    { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
+    { header: 'Врач', cell: (r) => r.doctor ?? '—' },
+    { header: 'Итог', cell: (r) => (r.stage ? <Badge tone="blue">{r.stage}</Badge> : '—') },
+    { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
+    { header: 'Оплата', align: 'right', cell: (r) => formatMoney(r.amount ?? 0) },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+  ];
+  const opsColumns: Column<OpRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата операции', cell: (r) => formatDate(r.dateOp) },
+    { header: 'Вид операции', cell: (r) => r.opType ?? '—' },
+    { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
+    { header: 'Стоимость', align: 'right', cell: (r) => formatMoney(r.cost ?? 0) },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+  ];
+  const exclColumns: Column<ExclRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
+    { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
+    { header: 'Врач', cell: (r) => r.doctor ?? '—' },
+    { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
 
   return (
@@ -221,15 +302,80 @@ function RewardTab({ from, to }: { from: string; to: string }) {
               <div className="mt-1 text-xl font-bold text-emerald-600">{formatMoney(data.totals.amount)}</div>
             </div>
           </div>
+          {data.excludedNoStageCount > 0 && (
+            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+              ⚠ <b>{data.excludedNoStageCount}</b>{' '}
+              {plural(data.excludedNoStageCount, 'заявка', 'заявки', 'заявок')} без итога не{' '}
+              {plural(data.excludedNoStageCount, 'попала', 'попали', 'попали')} в расчёт вознаграждения. Заполните
+              итог консультации, чтобы {plural(data.excludedNoStageCount, 'она учлась', 'они учлись', 'они учлись')}.
+            </div>
+          )}
           {rows.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-400">Нет записей за выбранный период</div>
           ) : (
             <Table columns={columns} rows={rows} />
           )}
+
+          {/* Расшифровка расчёта */}
+          <div className="mt-8">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Расшифровка расчёта</div>
+              {managers.length > 1 && (
+                <select className="input w-56" value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)}>
+                  <option value="">Все менеджеры</option>
+                  {managers.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="mb-2 text-sm font-semibold text-slate-700">
+              Консультации в расчёте <span className="text-slate-400">({consList.length})</span>
+            </div>
+            {consList.length === 0 ? (
+              <div className="mb-6 py-6 text-center text-sm text-slate-400">Нет консультаций</div>
+            ) : (
+              <div className="mb-6">
+                <Table columns={consColumns} rows={consList} />
+              </div>
+            )}
+
+            <div className="mb-2 text-sm font-semibold text-slate-700">
+              Операции в расчёте <span className="text-slate-400">({opsList.length})</span>
+            </div>
+            {opsList.length === 0 ? (
+              <div className="mb-6 py-6 text-center text-sm text-slate-400">Нет операций</div>
+            ) : (
+              <div className="mb-6">
+                <Table columns={opsColumns} rows={opsList} />
+              </div>
+            )}
+
+            {exclList.length > 0 && (
+              <>
+                <div className="mb-2 text-sm font-semibold text-amber-700">
+                  Заявки без итога — не в расчёте <span className="text-amber-500">({exclList.length})</span>
+                </div>
+                <Table columns={exclColumns} rows={exclList} />
+              </>
+            )}
+          </div>
         </>
       )}
     </div>
   );
+}
+
+// Русская форма множественного числа: (1 заявка, 2 заявки, 5 заявок)
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
 }
 
 // ================= Вкладка «Качество» (мини-дашборд) =================
