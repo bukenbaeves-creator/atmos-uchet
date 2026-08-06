@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { apiGet, apiPut } from '../api/client';
 import { formatMoney, formatNumber, formatDate } from '../lib/format';
 import { useAuth } from '../lib/auth';
@@ -10,6 +9,20 @@ import { Table, type Column } from '../components/Table';
 import { MoneyInput } from '../components/MoneyInput';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+type PresetKind = 'week' | 'month' | 'quarter' | 'year';
+const PRESET_LABELS: Record<PresetKind, string> = { week: 'Неделя', month: 'Месяц', quarter: 'Квартал', year: 'Год' };
+
+// Диапазон пресета: начало периода → сегодня. Чистая функция — по ней же
+// определяем, какой пресет сейчас активен (сравнением с текущими from/to).
+function presetRange(kind: PresetKind): { from: string; to: string } {
+  const n = new Date();
+  const to = iso(n);
+  if (kind === 'week') return { from: iso(new Date(Date.now() - 6 * 86400000)), to };
+  if (kind === 'month') return { from: iso(new Date(n.getFullYear(), n.getMonth(), 1)), to };
+  if (kind === 'quarter') return { from: iso(new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1)), to };
+  return { from: iso(new Date(n.getFullYear(), 0, 1)), to };
+}
 
 // Общий переключатель периода для всей страницы KPI.
 function PeriodControl({
@@ -23,35 +36,60 @@ function PeriodControl({
   setFrom: (v: string) => void;
   setTo: (v: string) => void;
 }) {
-  const preset = (kind: 'week' | 'month' | 'quarter' | 'year') => {
-    const n = new Date();
-    if (kind === 'week') setFrom(iso(new Date(Date.now() - 6 * 86400000)));
-    else if (kind === 'month') setFrom(iso(new Date(n.getFullYear(), n.getMonth(), 1)));
-    else if (kind === 'quarter') setFrom(iso(new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1)));
-    else setFrom(iso(new Date(n.getFullYear(), 0, 1)));
-    setTo(iso(n));
+  const apply = (kind: PresetKind) => {
+    const r = presetRange(kind);
+    setFrom(r.from);
+    setTo(r.to);
   };
+  // Активен пресет, чей диапазон совпадает с текущим (иначе — ручной диапазон)
+  const active = (['week', 'month', 'quarter', 'year'] as const).find((k) => {
+    const r = presetRange(k);
+    return r.from === from && r.to === to;
+  });
+
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="flex rounded-lg bg-slate-100 p-0.5">
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="inline-flex rounded-lg bg-slate-100 p-1">
         {(['week', 'month', 'quarter', 'year'] as const).map((k) => (
           <button
             key={k}
-            className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-800"
-            onClick={() => preset(k)}
+            type="button"
+            onClick={() => apply(k)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              active === k ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+            }`}
           >
-            {{ week: 'Неделя', month: 'Месяц', quarter: 'Квартал', year: 'Год' }[k]}
+            {PRESET_LABELS[k]}
           </button>
         ))}
       </div>
-      <div>
-        <label className="label">С</label>
-        <input type="date" className="input" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+      <div className="flex items-center gap-2 text-sm text-slate-500">
+        <span>Период:</span>
+        <div className="w-40">
+          <input type="date" className="input w-full" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+        </div>
+        <span className="text-slate-400">—</span>
+        <div className="w-40">
+          <input
+            type="date"
+            className="input w-full"
+            value={to}
+            min={from}
+            max={iso(new Date())}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </div>
       </div>
-      <div>
-        <label className="label">По</label>
-        <input type="date" className="input" value={to} min={from} max={iso(new Date())} onChange={(e) => setTo(e.target.value)} />
-      </div>
+    </div>
+  );
+}
+
+// Заголовок секции с тонким цветным акцентом
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="h-4 w-1 rounded bg-brand-500" />
+      <h2 className="text-base font-semibold text-slate-700">{title}</h2>
     </div>
   );
 }
@@ -64,18 +102,16 @@ export function Kpi() {
 
   return (
     <div>
-      <PageHeader
-        title="KPI менеджеров"
-        subtitle="Качество работы по итогам консультаций и вознаграждение по записям."
-        actions={<PeriodControl from={from} to={to} setFrom={setFrom} setTo={setTo} />}
-      />
+      <PageHeader title="KPI менеджеров" subtitle="Качество работы по итогам консультаций и вознаграждение по записям." />
 
-      <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Качество работы</div>
+      <PeriodControl from={from} to={to} setFrom={setFrom} setTo={setTo} />
+
+      <SectionHeader title="Качество работы" />
       <QualityTab from={from} to={to} />
 
       <div className="my-8 border-t border-slate-200" />
 
-      <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Вознаграждение</div>
+      <SectionHeader title="Вознаграждение" />
       <RewardTab from={from} to={to} />
     </div>
   );
@@ -412,7 +448,6 @@ interface QReport {
 const fmtPct = (v: number | null) => (v == null ? '—' : `${v}%`);
 const tone = (v: number | null, t: Target) =>
   v == null ? 'text-slate-400' : v >= t.green ? 'text-emerald-600' : v >= t.yellow ? 'text-amber-600' : 'text-rose-600';
-const barColor = (v: number | null, t: Target) => (v == null ? '#cbd5e1' : v >= t.green ? '#059669' : v >= t.yellow ? '#d97706' : '#e11d48');
 
 function QualityTab({ from, to }: { from: string; to: string }) {
   const { isAdmin } = useAuth();
@@ -453,8 +488,6 @@ function QualityTab({ from, to }: { from: string; to: string }) {
       cell: (r) => (r.noHistory ? <span className="text-slate-400">{r.noHistory}</span> : '—'),
     },
   ];
-
-  const chartData = rows.filter((r) => r.qualityPct != null).map((r) => ({ manager: r.manager, value: r.qualityPct as number }));
 
   return (
     <div>
@@ -511,27 +544,7 @@ function QualityTab({ from, to }: { from: string; to: string }) {
           {rows.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-400">Нет состоявшихся консультаций за выбранный период</div>
           ) : (
-            <>
-              <Table columns={columns} rows={rows} />
-              {chartData.length > 0 && (
-                <div className="card mt-5">
-                  <div className="mb-2 text-sm font-semibold text-slate-700">Качественные итоги по менеджерам, %</div>
-                  <ResponsiveContainer width="100%" height={Math.max(160, chartData.length * 44)}>
-                    <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" domain={[0, 100]} unit="%" />
-                      <YAxis type="category" dataKey="manager" width={90} />
-                      <Tooltip formatter={(v: number) => `${v}%`} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                        {chartData.map((d, i) => (
-                          <Cell key={i} fill={barColor(d.value, t.quality)} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </>
+            <Table columns={columns} rows={rows} />
           )}
         </>
       )}
