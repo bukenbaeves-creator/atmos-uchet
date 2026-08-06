@@ -71,6 +71,11 @@ const resultFields: Field[] = [
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
 
+// Мини-форма «Статус» — отдельное быстрое проставление статуса (доступно и после итога).
+const statusFields: Field[] = [
+  { name: 'konsStatus', label: 'Статус консультации', type: 'select', dict: 'kons_status', span: 2 },
+];
+
 // Оператор правит свою консультацию, пока итог не заполнен (даже если дата прошла);
 // после заполнения итога — только админ. Перенос даты и поздняя оплата — через
 // обычную форму редактирования.
@@ -85,9 +90,13 @@ export function Consultations() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [resultFor, setResultFor] = useState<Consultation | null>(null);
+  const [statusFor, setStatusFor] = useState<Consultation | null>(null);
 
   // Кнопка «Итог» — быстрый ввод итога, пока запись доступна к правке и итог не задан
   const canFillResult = (c: Consultation) => consultationEditable(c, user ?? null) && !c.stage;
+  // Статус консультации может проставить владелец записи или админ — даже после итога
+  // (нужно для массового проставления статусов по старым консультациям).
+  const canSetStatus = (c: Consultation) => !!user && (user.role === 'admin' || c.createdBy === user.id);
 
   // Дата консультации прошла, а итог не заполнен — напоминаем менеджеру заполнить.
   const overdueNoResult = (c: Consultation) => !c.stage && !!c.dateKons && dayjs(c.dateKons).isBefore(dayjs(), 'day');
@@ -103,7 +112,7 @@ export function Consultations() {
     { header: 'Интерес', cell: (c) => c.interestOperation ?? '—', filter: { kind: 'select', param: 'interestOperation', options: opt(dict?.op_type) } },
     {
       header: 'Статус',
-      filter: { kind: 'select', param: 'konsStatus', options: opt(dict?.kons_status) },
+      filter: { kind: 'select', param: 'konsStatus', options: [{ value: '__none__', label: '(не указан)' }, ...opt(dict?.kons_status)] },
       cell: (c) =>
         c.konsStatus === 'Прошёл консультацию' ? (
           <Badge tone="green">прошёл</Badge>
@@ -146,13 +155,20 @@ export function Consultations() {
         exportJournal="consultations"
         newButtonLabel="Консультацию"
         rowEditable={consultationEditable}
-        rowActions={(c) =>
-          canFillResult(c) ? (
-            <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setResultFor(c)}>
-              Итог
-            </button>
-          ) : null
-        }
+        rowActions={(c) => (
+          <>
+            {canFillResult(c) && (
+              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setResultFor(c)}>
+                Итог
+              </button>
+            )}
+            {canSetStatus(c) && (
+              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setStatusFor(c)}>
+                Статус
+              </button>
+            )}
+          </>
+        )}
         rowClassName={(c) => (overdueNoResult(c) ? 'bg-amber-50/70' : '')}
         notice={(rows) => {
           const n = rows.filter(overdueNoResult).length;
@@ -182,6 +198,26 @@ export function Consultations() {
               }
             }}
             onDone={() => setResultFor(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={statusFor != null}
+        onClose={() => setStatusFor(null)}
+        title={`Статус консультации · ${statusFor?.patient?.fio ?? ''}`}
+      >
+        {statusFor && (
+          <EntityForm
+            fields={statusFields}
+            initial={statusFor}
+            onSubmit={async (payload) => {
+              await apiPatch(`/consultations/${statusFor.id}/kons-status`, { konsStatus: payload.konsStatus });
+              for (const k of ['consultations', 'kpi-report']) {
+                await qc.invalidateQueries({ queryKey: [k] });
+              }
+            }}
+            onDone={() => setStatusFor(null)}
           />
         )}
       </Modal>

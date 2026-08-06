@@ -101,7 +101,9 @@ const router = makeCrudRouter({
   buildWhere: (q) => {
     const where: Record<string, unknown> = {};
     if (eqStr(q.stage)) where.stage = eqStr(q.stage);
-    if (eqStr(q.konsStatus)) where.konsStatus = eqStr(q.konsStatus);
+    // '__none__' — фильтр «статус не указан» (для массового проставления)
+    if (q.konsStatus === '__none__') where.konsStatus = null;
+    else if (eqStr(q.konsStatus)) where.konsStatus = eqStr(q.konsStatus);
     if (eqStr(q.manager)) where.manager = eqStr(q.manager);
     if (eqStr(q.doctor)) where.doctor = eqStr(q.doctor);
     if (eqStr(q.vid)) where.vid = eqStr(q.vid);
@@ -150,6 +152,32 @@ const resultSchema = z.object({
   resultDetails: optionalString(),
   konsStatus: optionalString(200),
 });
+
+const statusSchema = z.object({ konsStatus: optionalString(200) });
+
+// Быстрое проставление статуса консультации отдельным действием. Разрешено админу
+// и владельцу записи ДАЖЕ после заполнения итога (для массового бэкфилла статусов).
+router.patch(
+  '/:id/kons-status',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await prisma.consultation.findFirst({ where: { id, deletedAt: null }, include: { patient: true } });
+    if (!existing) throw notFound();
+    if (req.user!.role !== 'admin' && existing.createdBy !== req.user!.id) {
+      throw forbidden('Менять статус можно только у своей консультации');
+    }
+    const { konsStatus } = statusSchema.parse(req.body);
+    const status = konsStatus?.trim() ? konsStatus.trim() : null;
+    await assertDictionaryValue('kons_status', status);
+    const updated = await prisma.consultation.update({
+      where: { id },
+      data: { konsStatus: status, updatedBy: req.user!.id },
+      include: { patient: true },
+    });
+    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before: existing, after: updated });
+    res.json(serialize(updated));
+  }),
+);
 
 // Итог консультации отдельным действием. Оператор может проставить/менять итог
 // своей консультации, пока итог ещё не заполнен (запись не «закрыта»); как только
