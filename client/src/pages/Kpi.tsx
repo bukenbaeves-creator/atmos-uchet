@@ -26,6 +26,14 @@ function presetRange(kind: PresetKind): { from: string; to: string } {
   return { from: iso(new Date(n.getFullYear(), 0, 1)), to };
 }
 
+// Определяет пресет по диапазону (для стартовой подсветки). Порядок — от «крупного»
+// к «мелкому»: в начале месяца «Неделя» и «Месяц» дают одинаковый диапазон, и по
+// умолчанию логичнее подсветить «Месяц».
+function detectPreset(from: string, to: string): PresetKind | null {
+  const order: PresetKind[] = ['year', 'quarter', 'month', 'week'];
+  return order.find((k) => presetRange(k).from === from && presetRange(k).to === to) ?? null;
+}
+
 // Общий переключатель периода для всей страницы KPI.
 function PeriodControl({
   from,
@@ -38,16 +46,16 @@ function PeriodControl({
   setFrom: (v: string) => void;
   setTo: (v: string) => void;
 }) {
+  // Активный пресет храним явно (нажатую кнопку), а не выводим из дат — иначе, когда
+  // диапазоны совпадают (напр. в начале месяца «Неделя»==«Месяц»), клик по другой
+  // кнопке визуально «ничего не делал».
+  const [active, setActive] = useState<PresetKind | null>(() => detectPreset(from, to));
   const apply = (kind: PresetKind) => {
     const r = presetRange(kind);
     setFrom(r.from);
     setTo(r.to);
+    setActive(kind);
   };
-  // Активен пресет, чей диапазон совпадает с текущим (иначе — ручной диапазон)
-  const active = (['week', 'month', 'quarter', 'year'] as const).find((k) => {
-    const r = presetRange(k);
-    return r.from === from && r.to === to;
-  });
 
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -68,7 +76,16 @@ function PeriodControl({
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <span>Период:</span>
         <div className="w-40">
-          <input type="date" className="input w-full" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            type="date"
+            className="input w-full"
+            value={from}
+            max={to}
+            onChange={(e) => {
+              setFrom(e.target.value);
+              setActive(null);
+            }}
+          />
         </div>
         <span className="text-slate-400">—</span>
         <div className="w-40">
@@ -78,7 +95,10 @@ function PeriodControl({
             value={to}
             min={from}
             max={iso(new Date())}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) => {
+              setTo(e.target.value);
+              setActive(null);
+            }}
           />
         </div>
       </div>
