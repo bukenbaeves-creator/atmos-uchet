@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler } from '../lib/http.js';
+import { asyncHandler, notFound } from '../lib/http.js';
+import { prisma } from '../lib/prisma.js';
+import { serialize } from '../lib/serialize.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
@@ -51,6 +53,48 @@ router.get(
     const period = (['month', 'quarter', 'year'].includes(String(q.period)) ? q.period : 'month') as Period;
     const date = typeof q.date === 'string' ? q.date : undefined;
     res.json(await kpiReport(period, date));
+  }),
+);
+
+// ===== Согласование бесплатных консультаций для KPI =====
+
+// Комментарий менеджера к консультации без оплаты (оператор+админ)
+router.patch(
+  '/consultations/:id/comment',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const before = await prisma.consultation.findFirst({ where: { id, deletedAt: null } });
+    if (!before) throw notFound('Консультация не найдена');
+    const { comment } = z.object({ comment: z.string().max(1000).nullable().optional() }).parse(req.body);
+    const after = await prisma.consultation.update({
+      where: { id },
+      data: { kpiComment: comment?.trim() || null, updatedBy: req.user!.id },
+    });
+    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before, after });
+    res.json(serialize(after));
+  }),
+);
+
+// Согласование/снятие согласования консультации без оплаты (только админ)
+router.patch(
+  '/consultations/:id/approve',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const before = await prisma.consultation.findFirst({ where: { id, deletedAt: null } });
+    if (!before) throw notFound('Консультация не найдена');
+    const { approved } = z.object({ approved: z.coerce.boolean().default(true) }).parse(req.body ?? {});
+    const after = await prisma.consultation.update({
+      where: { id },
+      data: {
+        kpiApproved: approved,
+        kpiApprovedBy: approved ? req.user!.id : null,
+        kpiApprovedAt: approved ? new Date() : null,
+        updatedBy: req.user!.id,
+      },
+    });
+    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before, after });
+    res.json(serialize(after));
   }),
 );
 

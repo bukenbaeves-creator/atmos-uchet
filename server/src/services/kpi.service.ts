@@ -1,5 +1,8 @@
 import { prisma } from '../lib/prisma.js';
 import { KPI_DEFAULTS } from '../constants.js';
+import { computeOperation } from './compute.js';
+
+const KONS_ATTENDED = 'Прошёл консультацию';
 
 export interface KpiRates {
   consultationOnline: number;
@@ -76,9 +79,10 @@ export async function kpiReportRange(fromStr: string, toStr: string) {
 }
 
 // Общий расчёт вознаграждения по менеджерам за [from, toExclusive).
-// В расчёт попадают только УЖЕ СОСТОЯВШИЕСЯ события (дата <= сейчас) и только
-// консультации с заполненным итогом (stage). Консультации без итога исключаются
-// (мотивация заполнять итог), но возвращаются отдельным списком для уведомления.
+// В расчёт попадают только УЖЕ СОСТОЯВШИЕСЯ события (дата <= сейчас).
+// Консультация учитывается, если: статус = «Прошёл консультацию», заполнен итог (stage)
+// и есть оплата ЛИБО согласование админа (для бесплатных). Операция — только при 100% оплате.
+// Все «выпавшие» категории возвращаются отдельными списками для прозрачности.
 async function computeReward(from: Date, toExclusive: Date, label: string) {
   const rates = await getRates();
   const now = new Date();
@@ -102,14 +106,35 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
         patient: { is: { deletedAt: null } },
         dateOp: { gte: from, lt: toExclusive, lte: now },
       },
-      include: patientSel,
+      include: { ...patientSel, payments: { where: { deletedAt: null } } },
       orderBy: { dateOp: 'asc' },
     }),
   ]);
 
   const hasStage = (s: string | null) => !!s && s.trim() !== '';
-  const countedCons = consAll.filter((c) => hasStage(c.stage));
-  const excludedCons = consAll.filter((c) => !hasStage(c.stage));
+  // Классификация консультаций
+  const countedCons: typeof consAll = [];
+  const notAttendedCons: typeof consAll = [];
+  const excludedCons: typeof consAll = []; // прошёл, но без итога
+  const pendingCons: typeof consAll = []; // прошёл + итог, но без оплаты и без согласования
+  for (const c of consAll) {
+    if (c.konsStatus !== KONS_ATTENDED) {
+      notAttendedCons.push(c);
+    } else if (!hasStage(c.stage)) {
+      excludedCons.push(c);
+    } else if (Number(c.amount ?? 0) <= 0 && !c.kpiApproved) {
+      pendingCons.push(c);
+    } else {
+      countedCons.push(c);
+    }
+  }
+  // Классификация операций: в расчёт только оплаченные на 100%
+  const countedOps: typeof opsAll = [];
+  const unpaidOps: typeof opsAll = [];
+  for (const o of opsAll) {
+    if (computeOperation(o as never).fullyPaid) countedOps.push(o);
+    else unpaidOps.push(o);
+  }
 
   // Счётчики по менеджеру: онлайн (vid='Онлайн') / офлайн / операции.
   const byManager = new Map<string, { manager: string; online: number; offline: number; operations: number }>();
@@ -123,7 +148,7 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     if (c.vid === 'Онлайн') r.online += 1;
     else r.offline += 1;
   }
-  for (const o of opsAll) if (o.manager) ensure(o.manager).operations += 1;
+  for (const o of countedOps) if (o.manager) ensure(o.manager).operations += 1;
 
   const rows = [...byManager.values()]
     .map((r) => ({
@@ -146,7 +171,7 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     { consultationsOnline: 0, consultationsOffline: 0, operations: 0, amount: 0 },
   );
 
-  // Расшифровка: конкретные консультации/операции, попавшие в расчёт, и заявки без итога.
+  // Расшифровка расчёта — конкретные записи по каждой категории.
   const consultations = countedCons.map((c) => ({
     id: c.id,
     manager: c.manager,
@@ -156,10 +181,11 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     interestOperation: c.interestOperation,
     doctor: c.doctor,
     stage: c.stage,
+    konsStatus: c.konsStatus,
     dateZapis: c.dateZapis?.toISOString() ?? null,
     amount: c.amount != null ? Number(c.amount) : null,
   }));
-  const operations = opsAll.map((o) => ({
+  const operations = countedOps.map((o) => ({
     id: o.id,
     manager: o.manager,
     patientFio: o.patient?.fio ?? null,
@@ -177,6 +203,38 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     doctor: c.doctor,
     dateZapis: c.dateZapis?.toISOString() ?? null,
   }));
+  const notAttended = notAttendedCons.map((c) => ({
+    id: c.id,
+    manager: c.manager,
+    patientFio: c.patient?.fio ?? null,
+    dateKons: c.dateKons?.toISOString() ?? null,
+    doctor: c.doctor,
+    konsStatus: c.konsStatus,
+  }));
+  const pendingApproval = pendingCons.map((c) => ({
+    id: c.id,
+    manager: c.manager,
+    patientFio: c.patient?.fio ?? null,
+    dateKons: c.dateKons?.toISOString() ?? null,
+    vid: c.vid,
+    doctor: c.doctor,
+    comment: c.kpiComment,
+    approved: c.kpiApproved,
+  }));
+  const operationsUnpaid = unpaidOps.map((o) => {
+    const comp = computeOperation(o as never);
+    return {
+      id: o.id,
+      manager: o.manager,
+      patientFio: o.patient?.fio ?? null,
+      dateOp: o.dateOp?.toISOString() ?? null,
+      opType: o.opType,
+      surgeon: o.surgeon,
+      cost: o.cost != null ? Number(o.cost) : null,
+      paid: comp.paid,
+      balance: comp.balance,
+    };
+  });
 
   return {
     label,
@@ -189,5 +247,8 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     operations,
     excludedConsultations,
     excludedNoStageCount: excludedConsultations.length,
+    notAttended,
+    pendingApproval,
+    operationsUnpaid,
   };
 }

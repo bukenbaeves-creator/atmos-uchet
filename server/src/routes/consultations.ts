@@ -26,6 +26,8 @@ const schema = z
     // Итог (стадия воронки) заполняется позже админом — необязателен при создании.
     stage: optionalString(200),
     resultDetails: optionalString(),
+    // Статус консультации (прошёл/не прошёл) — заполняется после консультации.
+    konsStatus: optionalString(200),
     // Оплата — необязательна (консультация может быть бесплатной)
     amount: moneyAmount().optional().nullable(),
     payDate: optionalDate,
@@ -99,6 +101,7 @@ const router = makeCrudRouter({
   buildWhere: (q) => {
     const where: Record<string, unknown> = {};
     if (eqStr(q.stage)) where.stage = eqStr(q.stage);
+    if (eqStr(q.konsStatus)) where.konsStatus = eqStr(q.konsStatus);
     if (eqStr(q.manager)) where.manager = eqStr(q.manager);
     if (eqStr(q.doctor)) where.doctor = eqStr(q.doctor);
     if (eqStr(q.vid)) where.vid = eqStr(q.vid);
@@ -119,6 +122,7 @@ const router = makeCrudRouter({
     await assertDictionaryValue('manager', d.manager as string | null);
     await assertDictionaryValue('pay_method', d.payMethod as string | null);
     await assertDictionaryValue('terminal', d.terminal as string | null);
+    await assertDictionaryValue('kons_status', d.konsStatus as string | null);
   },
   prepareData: async (data, req, ctx) => {
     const { patient, ...rest } = data as Record<string, unknown> & { patient: never };
@@ -144,6 +148,7 @@ const router = makeCrudRouter({
 const resultSchema = z.object({
   stage: optionalString(200),
   resultDetails: optionalString(),
+  konsStatus: optionalString(200),
 });
 
 // Итог консультации отдельным действием. Оператор может проставить/менять итог
@@ -163,12 +168,14 @@ router.patch(
     }
     const data = resultSchema.parse(req.body);
     const stageLabel = data.stage?.trim() ? data.stage.trim() : null;
+    const konsStatus = data.konsStatus?.trim() ? data.konsStatus.trim() : null;
+    await assertDictionaryValue('kons_status', konsStatus);
     const updated = await prisma.$transaction(async (tx) => {
       // Свой итог (введён вручную) — добавляем в справочник «Стадии итога»
       await ensureDictionaryValue('consultation_stage', stageLabel, req, tx);
       const row = await tx.consultation.update({
         where: { id },
-        data: { stage: stageLabel, resultDetails: data.resultDetails ?? null, updatedBy: req.user!.id },
+        data: { stage: stageLabel, resultDetails: data.resultDetails ?? null, konsStatus, updatedBy: req.user!.id },
         include: { patient: true },
       });
       await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before: existing, after: row }, tx);

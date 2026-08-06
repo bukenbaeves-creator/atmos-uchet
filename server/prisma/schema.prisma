@@ -122,11 +122,19 @@ model Consultation {
   manager           String? // менеджер, записавший на консультацию (для KPI)
   stage             String?
   resultDetails     String?
+  konsStatus        String? // статус консультации: «Прошёл консультацию»/«Не прошёл консультацию» (справочник kons_status)
   payDate           DateTime?
   payMethod         String?
   terminal          String?
   payNote           String?
   amount            Decimal?  @db.Decimal(14, 2)
+
+  // Согласование для KPI: консультация без оплаты, но выполнившая критерии, попадает
+  // в расчёт только после согласования админом (менеджер прикладывает комментарий).
+  kpiComment    String?
+  kpiApproved   Boolean   @default(false)
+  kpiApprovedBy Int?
+  kpiApprovedAt DateTime?
 
   operations Operation[]
   payments   Payment[]

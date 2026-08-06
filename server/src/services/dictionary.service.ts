@@ -14,6 +14,7 @@ export const DICTIONARY_CATEGORIES = [
   'service_type',
   'consultation_stage',
   'vid',
+  'kons_status',
   'zapis',
   'manager',
 ] as const;

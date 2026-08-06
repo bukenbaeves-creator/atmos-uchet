@@ -27,6 +27,9 @@ export const ZAPIS = ['ВРАЧ', 'КЛИНИКА', 'КЛИНИКА+ВРАЧ'];
 
 export const VID = ['Офлайн', 'Онлайн'];
 
+// Статус консультации: состоялась ли (для KPI — в расчёт идут только «Прошёл консультацию»)
+export const KONS_STATUS = ['Прошёл консультацию', 'Не прошёл консультацию'];
+
 export const DOCTORS = [
   'Кулесбаев',
   'Бекремитов',
@@ -117,6 +120,7 @@ export const DICTIONARY_SEED: Record<string, string[]> = {
   service_type: SERVICE_TYPES,
   consultation_stage: STAGES,
   vid: VID,
+  kons_status: KONS_STATUS,
   zapis: ZAPIS,
   manager: MANAGERS,
 };

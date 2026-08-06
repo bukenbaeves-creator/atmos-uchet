@@ -16,6 +16,7 @@ interface Consultation {
   dateZapis: string | null;
   dateKons: string | null;
   stage: string | null;
+  konsStatus: string | null;
   resultDetails: string | null;
   doctor: string | null;
   manager: string | null;
@@ -51,7 +52,8 @@ const fields: Field[] = [
     showWhen: (v) => v.payMethod === 'Через терминал' && paid(v),
   },
   { name: 'payNote', label: 'Уточнение по оплате', type: 'textarea', showWhen: paid, span: 2 },
-  // --- итог (заполняется позже админом) ---
+  // --- статус и итог (заполняются после консультации) ---
+  { name: 'konsStatus', label: 'Статус консультации', type: 'select', dict: 'kons_status' },
   {
     name: 'stage',
     label: 'Итог консультации — заполняется после консультации',
@@ -62,8 +64,9 @@ const fields: Field[] = [
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
 
-// Мини-форма «Итог».
+// Мини-форма «Итог» (статус + итог заполняются вместе после консультации).
 const resultFields: Field[] = [
+  { name: 'konsStatus', label: 'Статус консультации', type: 'select', dict: 'kons_status', span: 2 },
   { name: 'stage', label: 'Итог консультации', type: 'select', dict: 'consultation_stage', allowCustom: true, span: 2 },
   { name: 'resultDetails', label: 'Детали итога консультации', type: 'textarea', span: 2 },
 ];
@@ -98,6 +101,18 @@ export function Consultations() {
     { header: 'Менеджер', cell: (c) => c.manager ?? '—', filter: { kind: 'select', param: 'manager', options: opt(dict?.manager) } },
     { header: 'Врач', cell: (c) => c.doctor ?? '—', filter: { kind: 'select', param: 'doctor', options: opt(dict?.doctor) } },
     { header: 'Интерес', cell: (c) => c.interestOperation ?? '—', filter: { kind: 'select', param: 'interestOperation', options: opt(dict?.op_type) } },
+    {
+      header: 'Статус',
+      filter: { kind: 'select', param: 'konsStatus', options: opt(dict?.kons_status) },
+      cell: (c) =>
+        c.konsStatus === 'Прошёл консультацию' ? (
+          <Badge tone="green">прошёл</Badge>
+        ) : c.konsStatus === 'Не прошёл консультацию' ? (
+          <Badge tone="slate">не прошёл</Badge>
+        ) : (
+          <span className="text-slate-400">—</span>
+        ),
+    },
     {
       header: 'Оплата',
       align: 'right',

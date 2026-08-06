@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPut } from '../api/client';
+import { apiGet, apiPut, apiPatch } from '../api/client';
 import { formatMoney, formatNumber, formatDate } from '../lib/format';
 import { useAuth } from '../lib/auth';
 import { useDictionaries } from '../lib/dictionaries';
@@ -8,7 +8,9 @@ import { PageHeader, Spinner, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { MoneyInput } from '../components/MoneyInput';
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+// Локальная дата в YYYY-MM-DD (без сдвига через toISOString/UTC — иначе при UTC+5
+// «1-е число месяца» уезжало на предыдущий день и пресеты работали неверно).
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 type PresetKind = 'week' | 'month' | 'quarter' | 'year';
 const PRESET_LABELS: Record<PresetKind, string> = { week: 'Неделя', month: 'Месяц', quarter: 'Квартал', year: 'Год' };
@@ -136,6 +138,7 @@ interface ConsRow {
   interestOperation: string | null;
   doctor: string | null;
   stage: string | null;
+  konsStatus: string | null;
   dateZapis: string | null;
   amount: number | null;
 }
@@ -157,6 +160,28 @@ interface ExclRow {
   doctor: string | null;
   dateZapis: string | null;
 }
+interface NotAttendedRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  dateKons: string | null;
+  doctor: string | null;
+  konsStatus: string | null;
+}
+interface PendingRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  dateKons: string | null;
+  vid: string | null;
+  doctor: string | null;
+  comment: string | null;
+  approved: boolean;
+}
+interface OpUnpaidRow extends OpRow {
+  paid: number | null;
+  balance: number | null;
+}
 interface Report {
   label: string;
   rates: { consultationOnline: number; consultationOffline: number; operation: number };
@@ -166,6 +191,51 @@ interface Report {
   operations: OpRow[];
   excludedConsultations: ExclRow[];
   excludedNoStageCount: number;
+  notAttended: NotAttendedRow[];
+  pendingApproval: PendingRow[];
+  operationsUnpaid: OpUnpaidRow[];
+}
+
+// Ячейка «Комментарий» для согласования — редактируется менеджером (оператор+админ)
+function CommentCell({ row }: { row: PendingRow }) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(row.comment ?? '');
+  const save = useMutation({
+    mutationFn: (comment: string) => apiPatch(`/kpi/consultations/${row.id}/comment`, { comment }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kpi-report'] }),
+  });
+  const dirty = value.trim() !== (row.comment ?? '').trim();
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        className="input h-8 w-56 text-xs"
+        placeholder="комментарий менеджера…"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
+      {dirty && (
+        <button className="btn-ghost px-2 py-1 text-xs" disabled={save.isPending} onClick={() => save.mutate(value.trim())}>
+          {save.isPending ? '…' : 'Сохранить'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Ячейка «Согласование» — кнопка «Согласовать» (только админ)
+function ApproveCell({ row, isAdmin }: { row: PendingRow; isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const approve = useMutation({
+    mutationFn: () => apiPatch(`/kpi/consultations/${row.id}/approve`, { approved: true }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kpi-report'] }),
+  });
+  if (row.approved) return <Badge tone="green">согласовано</Badge>;
+  if (!isAdmin) return <span className="text-xs text-slate-400">на согласовании</span>;
+  return (
+    <button className="btn-primary px-3 py-1 text-xs" disabled={approve.isPending} onClick={() => approve.mutate()}>
+      {approve.isPending ? '…' : 'Согласовать'}
+    </button>
+  );
 }
 
 function RewardTab({ from, to }: { from: string; to: string }) {
@@ -205,7 +275,14 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   // Список менеджеров, встречающихся в расшифровке, — для фильтра
   const managers = Array.from(
     new Set(
-      [...(data?.consultations ?? []), ...(data?.operations ?? []), ...(data?.excludedConsultations ?? [])]
+      [
+        ...(data?.consultations ?? []),
+        ...(data?.operations ?? []),
+        ...(data?.excludedConsultations ?? []),
+        ...(data?.notAttended ?? []),
+        ...(data?.pendingApproval ?? []),
+        ...(data?.operationsUnpaid ?? []),
+      ]
         .map((r) => r.manager)
         .filter((m): m is string => !!m),
     ),
@@ -216,6 +293,9 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   const consList = byMgr(data?.consultations ?? []);
   const opsList = byMgr(data?.operations ?? []);
   const exclList = byMgr(data?.excludedConsultations ?? []);
+  const notAttendedList = byMgr(data?.notAttended ?? []);
+  const pendingList = byMgr(data?.pendingApproval ?? []);
+  const opsUnpaidList = byMgr(data?.operationsUnpaid ?? []);
 
   const consColumns: Column<ConsRow>[] = [
     { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
@@ -225,7 +305,7 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
     { header: 'Итог', cell: (r) => (r.stage ? <Badge tone="blue">{r.stage}</Badge> : '—') },
     { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
-    { header: 'Оплата', align: 'right', cell: (r) => formatMoney(r.amount ?? 0) },
+    { header: 'Оплата', align: 'right', cell: (r) => (r.amount ? formatMoney(r.amount) : <Badge tone="green">согласовано</Badge>) },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const opsColumns: Column<OpRow>[] = [
@@ -242,6 +322,32 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
     { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+  ];
+  const notAttendedColumns: Column<NotAttendedRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
+    { header: 'Врач', cell: (r) => r.doctor ?? '—' },
+    { header: 'Статус', cell: (r) => r.konsStatus ?? <span className="text-slate-400">не указан</span> },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+  ];
+  const pendingColumns: Column<PendingRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
+    { header: 'Вид', cell: (r) => r.vid ?? '—' },
+    { header: 'Врач', cell: (r) => r.doctor ?? '—' },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+    { header: 'Комментарий менеджера', cell: (r) => <CommentCell row={r} /> },
+    { header: 'Согласование', align: 'center', cell: (r) => <ApproveCell row={r} isAdmin={isAdmin} /> },
+  ];
+  const opsUnpaidColumns: Column<OpUnpaidRow>[] = [
+    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    { header: 'Дата операции', cell: (r) => formatDate(r.dateOp) },
+    { header: 'Вид операции', cell: (r) => r.opType ?? '—' },
+    { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
+    { header: 'Стоимость', align: 'right', cell: (r) => formatMoney(r.cost ?? 0) },
+    { header: 'Оплачено', align: 'right', cell: (r) => formatMoney(r.paid ?? 0) },
+    { header: 'Остаток', align: 'right', cell: (r) => <span className="text-rose-600">{formatMoney(r.balance ?? 0)}</span> },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
 
@@ -346,6 +452,14 @@ function RewardTab({ from, to }: { from: string; to: string }) {
               итог консультации, чтобы {plural(data.excludedNoStageCount, 'она учлась', 'они учлись', 'они учлись')}.
             </div>
           )}
+          {data.pendingApproval.length > 0 && (
+            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+              ⏳ <b>{data.pendingApproval.length}</b>{' '}
+              {plural(data.pendingApproval.length, 'консультация', 'консультации', 'консультаций')} без оплаты{' '}
+              {plural(data.pendingApproval.length, 'ждёт', 'ждут', 'ждут')} согласования (см. блок «Без оплаты — на
+              согласовании» ниже).
+            </div>
+          )}
           {rows.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-400">Нет записей за выбранный период</div>
           ) : (
@@ -390,13 +504,44 @@ function RewardTab({ from, to }: { from: string; to: string }) {
               </div>
             )}
 
+            {pendingList.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-sm font-semibold text-amber-700">
+                  Без оплаты — на согласовании <span className="text-amber-500">({pendingList.length})</span>
+                </div>
+                <div className="mb-2 text-xs text-slate-500">
+                  Консультация состоялась и есть итог, но нет оплаты. Менеджер добавляет комментарий, админ согласовывает —
+                  после этого она попадает в расчёт.
+                </div>
+                <Table columns={pendingColumns} rows={pendingList} />
+              </div>
+            )}
+
             {exclList.length > 0 && (
-              <>
+              <div className="mb-6">
                 <div className="mb-2 text-sm font-semibold text-amber-700">
                   Заявки без итога — не в расчёте <span className="text-amber-500">({exclList.length})</span>
                 </div>
                 <Table columns={exclColumns} rows={exclList} />
-              </>
+              </div>
+            )}
+
+            {notAttendedList.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-sm font-semibold text-slate-600">
+                  Не прошли консультацию — не в расчёте <span className="text-slate-400">({notAttendedList.length})</span>
+                </div>
+                <Table columns={notAttendedColumns} rows={notAttendedList} />
+              </div>
+            )}
+
+            {opsUnpaidList.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-sm font-semibold text-slate-600">
+                  Операции без 100% оплаты — не в расчёте <span className="text-slate-400">({opsUnpaidList.length})</span>
+                </div>
+                <Table columns={opsUnpaidColumns} rows={opsUnpaidList} />
+              </div>
             )}
           </div>
         </>
@@ -492,18 +637,16 @@ function QualityTab({ from, to }: { from: string; to: string }) {
   return (
     <div>
       {/* Фильтр по менеджеру (период — общий, вверху страницы) */}
-      <div className="mb-4 flex flex-wrap items-end gap-2">
-        <div>
-          <label className="label">Менеджер</label>
-          <select className="input" value={manager} onChange={(e) => setManager(e.target.value)}>
-            <option value="">Все</option>
-            {dict?.manager?.map((m) => (
-              <option key={m.id} value={m.label}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="text-sm text-slate-500">Менеджер</span>
+        <select className="input w-56" value={manager} onChange={(e) => setManager(e.target.value)}>
+          <option value="">Все</option>
+          {dict?.manager?.map((m) => (
+            <option key={m.id} value={m.label}>
+              {m.label}
+            </option>
+          ))}
+        </select>
         {isAdmin && (
           <button className="btn-ghost ml-auto" onClick={() => setShowSettings((v) => !v)}>
             ⚙️ Настройки
