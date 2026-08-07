@@ -45,7 +45,11 @@ export const apiDelete = <T>(path: string) => request<T>(path, { method: 'DELETE
 // простой ссылки <a href> даёт обратную связь и не плодит повторные загрузки.
 export async function downloadFile(url: string, filename: string): Promise<void> {
   const res = await fetch(url, { credentials: 'include' });
-  if (!res.ok) throw new ApiError(res.status, `Не удалось выгрузить файл (${res.status})`);
+  if (!res.ok) {
+    // Пытаемся показать осмысленную причину с сервера (напр. нет прав), иначе — общий текст
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, body.error ?? `Не удалось выгрузить файл (${res.status})`);
+  }
   const blob = await res.blob();
   const href = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPut, apiPatch } from '../api/client';
+import { apiGet, apiPut, apiPatch, ApiError } from '../api/client';
 import { formatMoney, formatNumber, formatDate } from '../lib/format';
 import { useAuth } from '../lib/auth';
 import { useDictionaries } from '../lib/dictionaries';
@@ -212,19 +212,27 @@ interface Report {
   excludedConsultations: ExclRow[];
   excludedNoStageCount: number;
   notAttended: NotAttendedRow[];
+  statusNotSet: NotAttendedRow[];
   pendingApproval: PendingRow[];
   operationsUnpaid: OpUnpaidRow[];
 }
+
+const mutErr = (e: unknown) => (e instanceof ApiError ? e.message : 'Ошибка. Повторите.');
 
 // Ячейка «Комментарий» для согласования — редактируется менеджером (оператор+админ)
 function CommentCell({ row }: { row: PendingRow }) {
   const qc = useQueryClient();
   const [value, setValue] = useState(row.comment ?? '');
+  const dirty = value.trim() !== (row.comment ?? '').trim();
+  // Пере-синхронизируем поле с сервером, если запись обновилась извне и черновик не менялся.
+  useEffect(() => {
+    if (!dirty) setValue(row.comment ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row.comment]);
   const save = useMutation({
     mutationFn: (comment: string) => apiPatch(`/kpi/consultations/${row.id}/comment`, { comment }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kpi-report'] }),
   });
-  const dirty = value.trim() !== (row.comment ?? '').trim();
   return (
     <div className="flex items-center gap-1">
       <input
@@ -238,6 +246,7 @@ function CommentCell({ row }: { row: PendingRow }) {
           {save.isPending ? '…' : 'Сохранить'}
         </button>
       )}
+      {save.isError && <span className="text-xs text-rose-600" title={mutErr(save.error)}>✕</span>}
     </div>
   );
 }
@@ -252,9 +261,12 @@ function ApproveCell({ row, isAdmin }: { row: PendingRow; isAdmin: boolean }) {
   if (row.approved) return <Badge tone="green">согласовано</Badge>;
   if (!isAdmin) return <span className="text-xs text-slate-400">на согласовании</span>;
   return (
-    <button className="btn-primary px-3 py-1 text-xs" disabled={approve.isPending} onClick={() => approve.mutate()}>
-      {approve.isPending ? '…' : 'Согласовать'}
-    </button>
+    <div className="inline-flex items-center gap-1">
+      <button className="btn-primary px-3 py-1 text-xs" disabled={approve.isPending} onClick={() => approve.mutate()}>
+        {approve.isPending ? '…' : 'Согласовать'}
+      </button>
+      {approve.isError && <span className="text-xs text-rose-600" title={mutErr(approve.error)}>✕</span>}
+    </div>
   );
 }
 
@@ -300,6 +312,7 @@ function RewardTab({ from, to }: { from: string; to: string }) {
         ...(data?.operations ?? []),
         ...(data?.excludedConsultations ?? []),
         ...(data?.notAttended ?? []),
+        ...(data?.statusNotSet ?? []),
         ...(data?.pendingApproval ?? []),
         ...(data?.operationsUnpaid ?? []),
       ]
@@ -307,13 +320,17 @@ function RewardTab({ from, to }: { from: string; to: string }) {
         .filter((m): m is string => !!m),
     ),
   ).sort((a, b) => a.localeCompare(b, 'ru'));
+  // «Эффективный» фильтр: если выбранного менеджера нет в текущих данных (сменили период) —
+  // считаем фильтр сброшенным, иначе таблицы «пустеют без причины».
+  const effManager = managerFilter && managers.includes(managerFilter) ? managerFilter : '';
   const byMgr = <T extends { manager: string | null }>(list: T[]) =>
-    managerFilter ? list.filter((r) => r.manager === managerFilter) : list;
+    effManager ? list.filter((r) => r.manager === effManager) : list;
 
   const consList = byMgr(data?.consultations ?? []);
   const opsList = byMgr(data?.operations ?? []);
   const exclList = byMgr(data?.excludedConsultations ?? []);
   const notAttendedList = byMgr(data?.notAttended ?? []);
+  const statusNotSetList = byMgr(data?.statusNotSet ?? []);
   const pendingList = byMgr(data?.pendingApproval ?? []);
   const opsUnpaidList = byMgr(data?.operationsUnpaid ?? []);
 
@@ -433,6 +450,11 @@ function RewardTab({ from, to }: { from: string; to: string }) {
             <button className="btn-ghost" onClick={() => setEditRates(null)}>
               Отмена
             </button>
+            {saveRates.isError && (
+              <span className="text-sm text-rose-600">
+                {saveRates.error instanceof ApiError ? saveRates.error.message : 'Не удалось сохранить ставки'}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -490,8 +512,8 @@ function RewardTab({ from, to }: { from: string; to: string }) {
           <div className="mt-8">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Расшифровка расчёта</div>
-              {managers.length > 1 && (
-                <select className="input w-56" value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)}>
+              {managers.length > 0 && (
+                <select className="input w-56" value={effManager} onChange={(e) => setManagerFilter(e.target.value)}>
                   <option value="">Все менеджеры</option>
                   {managers.map((m) => (
                     <option key={m} value={m}>
@@ -552,6 +574,18 @@ function RewardTab({ from, to }: { from: string; to: string }) {
                   Не прошли консультацию — не в расчёте <span className="text-slate-400">({notAttendedList.length})</span>
                 </div>
                 <Table columns={notAttendedColumns} rows={notAttendedList} />
+              </div>
+            )}
+
+            {statusNotSetList.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-sm font-semibold text-slate-600">
+                  Статус не указан — не в расчёте <span className="text-slate-400">({statusNotSetList.length})</span>
+                </div>
+                <div className="mb-2 text-xs text-slate-500">
+                  Проставьте статус консультации («Прошёл»/«Не прошёл»), чтобы они учитывались в KPI.
+                </div>
+                <Table columns={notAttendedColumns} rows={statusNotSetList} />
               </div>
             )}
 
@@ -628,6 +662,10 @@ function QualityTab({ from, to }: { from: string; to: string }) {
 
   const rows: QRow[] = (data?.rows ?? []).map((r, i) => ({ ...r, id: i + 1 }));
   const t = data?.settings.targets;
+  // Значения по умолчанию, чтобы не использовать non-null (`t!`) — колонки всё равно
+  // отображаются только когда данные загружены (см. guard ниже).
+  const noT: Target = { green: 0, yellow: 0 };
+  const tt = t ?? { quality: noT, timeliness: noT, conversion: noT };
 
   const columns: Column<QRow>[] = [
     { header: 'Менеджер', cell: (r) => <span className="font-medium">{r.manager}</span> },
@@ -635,17 +673,17 @@ function QualityTab({ from, to }: { from: string; to: string }) {
     {
       header: 'Качество',
       align: 'right',
-      cell: (r) => <span className={`font-semibold ${tone(r.qualityPct, t!.quality)}`}>{fmtPct(r.qualityPct)}</span>,
+      cell: (r) => <span className={`font-semibold ${tone(r.qualityPct, tt.quality)}`}>{fmtPct(r.qualityPct)}</span>,
     },
     {
       header: 'Своевременность',
       align: 'right',
-      cell: (r) => <span className={`font-semibold ${tone(r.timelyPct, t!.timeliness)}`}>{fmtPct(r.timelyPct)}</span>,
+      cell: (r) => <span className={`font-semibold ${tone(r.timelyPct, tt.timeliness)}`}>{fmtPct(r.timelyPct)}</span>,
     },
     {
       header: 'Конверсия',
       align: 'right',
-      cell: (r) => <span className={`font-semibold ${tone(r.conversionPct, t!.conversion)}`}>{fmtPct(r.conversionPct)}</span>,
+      cell: (r) => <span className={`font-semibold ${tone(r.conversionPct, tt.conversion)}`}>{fmtPct(r.conversionPct)}</span>,
     },
     {
       header: 'Без истории',
@@ -800,6 +838,11 @@ function SettingsPanel({ settings, onSaved }: { settings?: QSettings; onSaved: (
           <button className="btn-ghost" onClick={() => setForm(null)}>
             Сбросить
           </button>
+        )}
+        {save.isError && (
+          <span className="self-center text-sm text-rose-600">
+            {save.error instanceof ApiError ? save.error.message : 'Не удалось сохранить настройки'}
+          </span>
         )}
       </div>
     </div>

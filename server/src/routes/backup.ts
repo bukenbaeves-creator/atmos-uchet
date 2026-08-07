@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { timingSafeEqual } from 'crypto';
 import { asyncHandler, badRequest, unauthorized } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
@@ -10,19 +11,28 @@ import { buildBackup, sendBackupEmail, getRecipient, setRecipient, getLastRun } 
 
 const router = Router();
 
+// Сравнение секретов за постоянное время (защита от тайминг-атаки на подбор токена).
+function tokenMatches(provided: string): boolean {
+  const expected = config.backup.cronToken;
+  if (!expected || !provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 // --- Публичный эндпоинт для внешнего планировщика (GitHub Actions) ---
 // Объявлен ДО requireAuth/requireAdmin: без сессии, защищён общим токеном.
-// Собирает бэкап и отправляет на почту. token — в query или заголовке X-Backup-Token.
+// Собирает бэкап и отправляет на почту. Токен предпочтительно в заголовке X-Backup-Token
+// (в query он утекает в access-логи прокси).
 router.post(
   '/cron',
   asyncHandler(async (req, res) => {
-    const provided = (req.query.token as string) || req.get('X-Backup-Token') || '';
-    if (!config.backup.cronToken || provided !== config.backup.cronToken) {
-      throw unauthorized('Неверный токен');
-    }
-    const { recipient, counts } = await sendBackupEmail();
+    const provided = req.get('X-Backup-Token') || (req.query.token as string) || '';
+    if (!tokenMatches(provided)) throw unauthorized('Неверный токен');
+    const { counts } = await sendBackupEmail();
     const total = Object.values(counts).reduce((s, n) => s + n, 0);
-    res.json({ ok: true, recipient, records: total });
+    await writeAudit(req, { action: 'backup', entity: 'backup', after: { mode: 'cron', records: total } });
+    res.json({ ok: true, records: total }); // recipient не раскрываем в публичном ответе
   }),
 );
 

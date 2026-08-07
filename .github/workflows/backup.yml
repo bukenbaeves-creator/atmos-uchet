@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger backup email
+        # Токен передаём заголовком (в query он утёк бы в access-логи прокси).
         run: |
-          curl -fS -X POST \
-            "${{ secrets.APP_URL }}/api/backup/cron?token=${{ secrets.BACKUP_CRON_TOKEN }}"
+          curl -fS --max-time 120 -X POST \
+            -H "X-Backup-Token: ${{ secrets.BACKUP_CRON_TOKEN }}" \
+            "${{ secrets.APP_URL }}/api/backup/cron"

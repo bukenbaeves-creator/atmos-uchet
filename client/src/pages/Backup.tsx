@@ -44,6 +44,7 @@ export function Backup() {
     setSavingEmail(true);
     try {
       await apiPut('/backup/settings', { recipient: recipientValue.trim() });
+      setRecipient(null); // показываем нормализованное сервером значение (из refetch), а не черновик
       await refetch();
       setEmailMsg({ kind: 'ok', text: 'Адрес получателя сохранён.' });
     } catch (err) {

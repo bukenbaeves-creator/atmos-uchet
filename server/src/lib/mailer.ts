@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from './config.js';
+import { ApiError } from './http.js';
 
 // Почта настроена, только когда есть хост, логин и пароль отправителя.
 export function isMailConfigured(): boolean {
@@ -15,6 +16,10 @@ function getTransporter(): Transporter {
       port: config.smtp.port,
       secure: config.smtp.secure,
       auth: { user: config.smtp.user, pass: config.smtp.pass },
+      // Таймауты, чтобы зависший SMTP не держал запрос/воркфлоу бесконечно.
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
     });
   }
   return transporter;
@@ -33,13 +38,18 @@ export async function sendMail(opts: {
   attachments?: Attachment[];
 }): Promise<void> {
   if (!isMailConfigured()) {
-    throw new Error('Почта не настроена: задайте SMTP_HOST, SMTP_USER, SMTP_PASS в переменных окружения.');
+    throw new ApiError(400, 'Почта не настроена: задайте SMTP_HOST, SMTP_USER, SMTP_PASS в переменных окружения.');
   }
-  await getTransporter().sendMail({
-    from: config.smtp.from,
-    to: opts.to,
-    subject: opts.subject,
-    text: opts.text,
-    attachments: opts.attachments,
-  });
+  try {
+    await getTransporter().sendMail({
+      from: config.smtp.from,
+      to: opts.to,
+      subject: opts.subject,
+      text: opts.text,
+      attachments: opts.attachments,
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'неизвестная ошибка';
+    throw new ApiError(502, `Не удалось отправить письмо (SMTP): ${reason}`);
+  }
 }

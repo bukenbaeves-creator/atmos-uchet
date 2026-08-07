@@ -1,3 +1,6 @@
+# ⚠️ DEV ONLY. Этот образ запускает `npm run dev` (tsx watch) без NODE_ENV=production.
+# В прод НЕ использовать: при NODE_ENV≠production config.ts берёт слабый дефолт JWT_SECRET
+# ('dev_secret_change_me') → возможна подделка токенов. Прод собирается корневым Dockerfile.
 FROM node:20-slim
 
 # Prisma требует openssl; в slim-образе его нужно доустановить

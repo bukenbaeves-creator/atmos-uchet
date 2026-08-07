@@ -187,8 +187,12 @@ export function PatientCard() {
                 <li key={pay.id} className="flex items-center justify-between py-2">
                   <span>
                     {formatDate(pay.date)} · {pay.serviceType ?? '—'} · {pay.payMethod ?? '—'}
-                    {pay.operationId && opById.has(pay.operationId) ? (
-                      <span className="text-slate-500"> · операция: {opById.get(pay.operationId)}</span>
+                    {pay.operationId ? (
+                      opById.has(pay.operationId) ? (
+                        <span className="text-slate-500"> · операция: {opById.get(pay.operationId)}</span>
+                      ) : (
+                        <span className="text-slate-400"> · операция вне списка (удалена?)</span>
+                      )
                     ) : (
                       <span className="text-slate-400"> · без привязки к операции</span>
                     )}

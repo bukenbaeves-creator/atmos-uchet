@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, notFound } from '../lib/http.js';
+import { asyncHandler, notFound, forbidden } from '../lib/http.js';
 import { prisma } from '../lib/prisma.js';
 import { serialize } from '../lib/serialize.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -65,6 +65,10 @@ router.patch(
     const id = Number(req.params.id);
     const before = await prisma.consultation.findFirst({ where: { id, deletedAt: null } });
     if (!before) throw notFound('Консультация не найдена');
+    // Комментарий может править админ или владелец записи (как и статус) — не чужие.
+    if (req.user!.role !== 'admin' && before.createdBy !== req.user!.id) {
+      throw forbidden('Менять комментарий можно только у своей консультации');
+    }
     const { comment } = z.object({ comment: z.string().max(1000).nullable().optional() }).parse(req.body);
     const after = await prisma.consultation.update({
       where: { id },

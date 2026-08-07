@@ -37,7 +37,8 @@ function operationCanEdit(user: { id: number; role: string }, record: Record<str
   const d = new Date(dateOp);
   const deadline = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); // конец «дня операции + 1»
   const now = new Date();
-  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  // Сегодня — тоже в UTC (даты хранятся как UTC-полночь), иначе на non-UTC сервере граница «съедет».
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   return today <= deadline;
 }
 
@@ -73,7 +74,7 @@ const router = makeCrudRouter({
     await assertDictionaryValue('zapis', d.zapis as string | null);
     await assertDictionaryValue('manager', d.manager as string | null);
   },
-  transform: (row) => ({ ...row, ...computeOperation(row as never) }),
+  transform: (row) => ({ ...row, ...computeOperation(row as unknown as Parameters<typeof computeOperation>[0]) }),
   prepareData: async (data, req, ctx) => {
     const { patient, confirmDuplicate, ...rest } = data as Record<string, unknown> & { patient: never };
     const patientId = await resolvePatient(patient, req, ctx.tx);

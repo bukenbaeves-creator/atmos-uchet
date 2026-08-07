@@ -192,8 +192,8 @@ export function Consultations() {
             initial={resultFor}
             onSubmit={async (payload) => {
               await apiPatch(`/consultations/${resultFor.id}/result`, payload);
-              // Итог влияет на список консультаций, воронку/отчёты и справочник стадий
-              for (const k of ['consultations', 'dashboard', 'kpi-report', 'dictionaries']) {
+              // Итог/статус влияют на список, воронку, оба отчёта KPI и справочник стадий
+              for (const k of ['consultations', 'dashboard', 'kpi-report', 'kpi-quality', 'dictionaries']) {
                 await qc.invalidateQueries({ queryKey: [k] });
               }
             }}
@@ -213,7 +213,7 @@ export function Consultations() {
             initial={statusFor}
             onSubmit={async (payload) => {
               await apiPatch(`/consultations/${statusFor.id}/kons-status`, { konsStatus: payload.konsStatus });
-              for (const k of ['consultations', 'kpi-report']) {
+              for (const k of ['consultations', 'kpi-report', 'kpi-quality']) {
                 await qc.invalidateQueries({ queryKey: [k] });
               }
             }}

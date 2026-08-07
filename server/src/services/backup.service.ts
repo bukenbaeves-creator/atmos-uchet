@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import { prisma } from '../lib/prisma.js';
-import { serialize } from '../lib/serialize.js';
+import { ApiError } from '../lib/http.js';
 import { isMailConfigured, sendMail } from '../lib/mailer.js';
 
 const RECIPIENT_KEY = 'backup_email_to';
@@ -43,7 +43,9 @@ export async function buildBackup(): Promise<Backup> {
   const counts: Record<string, number> = {};
   for (const { key, load } of TABLES) {
     const rows = await load();
-    data[key] = serialize(rows) as unknown[];
+    // Сырые строки: JSON.stringify сам отдаёт Date как ISO, а Prisma.Decimal — строкой
+    // (через toJSON), сохраняя точность денег (в отличие от serialize(), где Decimal→number).
+    data[key] = rows;
     counts[key] = rows.length;
   }
   const payload = {
@@ -52,7 +54,7 @@ export async function buildBackup(): Promise<Backup> {
   };
   return {
     filename: `atmos-backup-${dayjs().format('YYYY-MM-DD-HHmm')}.json`,
-    json: JSON.stringify(payload, null, 2),
+    json: JSON.stringify(payload), // без pretty-print — меньше пиковая память
     counts,
   };
 }
@@ -88,11 +90,11 @@ async function markRun(): Promise<void> {
 // Бросает понятную ошибку, если почта или получатель не настроены.
 export async function sendBackupEmail(): Promise<{ recipient: string; counts: Record<string, number> }> {
   if (!isMailConfigured()) {
-    throw new Error('Почта не настроена: задайте SMTP_HOST, SMTP_USER, SMTP_PASS в переменных окружения.');
+    throw new ApiError(400, 'Почта не настроена: задайте SMTP_HOST, SMTP_USER, SMTP_PASS в переменных окружения.');
   }
   const recipient = (await getRecipient()).trim();
   if (!recipient) {
-    throw new Error('Не указан адрес получателя. Впишите e-mail на странице «Резервные копии».');
+    throw new ApiError(400, 'Не указан адрес получателя. Впишите e-mail на странице «Резервные копии».');
   }
   const backup = await buildBackup();
   const total = Object.values(backup.counts).reduce((s, n) => s + n, 0);
