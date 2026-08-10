@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, ApiError, expenseExportUrl } from '../api/client';
+import dayjs from 'dayjs';
+import { apiGet, apiPost, apiPut, apiDelete, ApiError, expenseExportUrl } from '../api/client';
 import { ExportButton } from '../components/ExportButton';
 import type { ListResponse } from '../api/hooks';
 import { formatDate } from '../lib/format';
@@ -17,12 +18,24 @@ interface Writeoff {
   costTotal?: number; // приходит только администратору
   isShortage: boolean;
   opType?: string | null;
-  patient?: { id: number; fio: string };
+  categoryId: number;
+  nomenclatureId: number;
+  operationId?: number | null;
+  createdBy?: number | null;
+  createdAt?: string;
+  patient?: { id: number; fio: string; phone?: string | null; city?: string | null; birthDate?: string | null };
   nomenclature?: { nameDisplay: string; unitWriteoff: string | null };
   category?: { name: string };
 }
 interface NomOption { id: number; nameDisplay: string; unitWriteoff: string | null }
 interface CatOption { id: number; name: string }
+
+// Права на правку/удаление: админ — любую; медсестра — свою в день создания.
+function canEditWriteoff(w: Writeoff, user: { id: number; role: string } | null): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return w.createdBy === user.id && !!w.createdAt && dayjs(w.createdAt).isSame(dayjs(), 'day');
+}
 
 export function Writeoffs() {
   const { user } = useAuth();
@@ -30,11 +43,31 @@ export function Writeoffs() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Writeoff | null>(null);
+  const [delId, setDelId] = useState<number | null>(null);
+  const [rowErr, setRowErr] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['writeoffs', { page }],
     queryFn: () => apiGet<ListResponse<Writeoff>>(`/writeoffs?page=${page}`),
   });
+
+  const invalidate = () => {
+    for (const k of ['writeoffs', 'stock', 'nomenclature']) qc.invalidateQueries({ queryKey: [k] });
+  };
+  const removeWriteoff = async (id: number) => {
+    if (!confirm('Удалить (отменить) это списание? Материал вернётся на склад.')) return;
+    setRowErr(null);
+    setDelId(id);
+    try {
+      await apiDelete(`/writeoffs/${id}`);
+      invalidate();
+    } catch (err) {
+      setRowErr(err instanceof ApiError ? err.message : 'Не удалось удалить списание');
+    } finally {
+      setDelId(null);
+    }
+  };
 
   const columns: Column<Writeoff>[] = [
     { header: 'Дата', cell: (w) => formatDate(w.date) },
@@ -55,6 +88,25 @@ export function Writeoffs() {
     ...(isAdmin
       ? [{ header: 'Себестоимость', align: 'right' as const, cell: (w: Writeoff) => (w.costTotal != null ? w.costTotal.toLocaleString('ru-RU') : '—') }]
       : []),
+    {
+      header: '',
+      align: 'right' as const,
+      cell: (w: Writeoff) =>
+        canEditWriteoff(w, user ?? null) ? (
+          <span className="flex justify-end gap-1">
+            <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(w)}>
+              Изменить
+            </button>
+            <button
+              className="btn-danger px-2 py-1 text-xs"
+              disabled={delId === w.id}
+              onClick={() => removeWriteoff(w.id)}
+            >
+              {delId === w.id ? '…' : 'Удалить'}
+            </button>
+          </span>
+        ) : null,
+    },
   ];
 
   return (
@@ -72,6 +124,8 @@ export function Writeoffs() {
         }
       />
 
+      {rowErr && <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{rowErr}</div>}
+
       {isError ? (
         <EmptyState>Не удалось загрузить данные. Обновите страницу или войдите заново.</EmptyState>
       ) : isLoading ? (
@@ -86,12 +140,11 @@ export function Writeoffs() {
       )}
 
       <Modal open={open} onClose={() => setOpen(false)} title="Новое списание материала">
-        <WriteoffForm
-          onDone={() => setOpen(false)}
-          onSaved={() => {
-            for (const k of ['writeoffs', 'stock', 'nomenclature']) qc.invalidateQueries({ queryKey: [k] });
-          }}
-        />
+        <WriteoffForm onDone={() => setOpen(false)} onSaved={invalidate} />
+      </Modal>
+
+      <Modal open={editing != null} onClose={() => setEditing(null)} title="Правка списания">
+        {editing && <EditWriteoffForm writeoff={editing} onDone={() => setEditing(null)} onSaved={invalidate} />}
       </Modal>
     </div>
   );
@@ -101,6 +154,7 @@ interface WLine {
   uid: number;
   nomenclatureId: string;
   qty: string;
+  nom?: NomOption; // отображаемая позиция (для подставленных строк — показать имя без запроса)
 }
 
 function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => void }) {
@@ -129,6 +183,31 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
   };
   const removeLine = (uid: number) => setLines((ls) => (ls.length > 1 ? ls.filter((l) => l.uid !== uid) : ls));
 
+  // Подставить позиции из прошлого списания этого вида операции (без количеств).
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const copyFromLast = async () => {
+    if (!opType) return;
+    setCopyMsg(null);
+    setCopyBusy(true);
+    try {
+      const res = await apiGet<{ positions: NomOption[] }>(`/writeoffs/template?opType=${encodeURIComponent(opType)}`);
+      if (!res.positions.length) {
+        setCopyMsg('Нет прошлых списаний по этой операции.');
+        return;
+      }
+      let uid = nextUid;
+      const newLines: WLine[] = res.positions.map((p) => ({ uid: uid++, nomenclatureId: String(p.id), qty: '', nom: p }));
+      setLines(newLines);
+      setNextUid(uid);
+      setCopyMsg(`Подставлено позиций: ${newLines.length}. Укажите количества.`);
+    } catch (err) {
+      setCopyMsg(err instanceof ApiError ? err.message : 'Не удалось загрузить позиции');
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -147,7 +226,7 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
           birthDate: patient.birthDate || null,
         },
         categoryId: Number(categoryId),
-        opType: opType || null,
+        opType,
         date,
         lines: filled.map((l) => ({ nomenclatureId: Number(l.nomenclatureId), qty: Number(l.qty) })),
       });
@@ -198,9 +277,9 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
           </select>
         </div>
         <div>
-          <label className="label">Вид операции</label>
-          <select className="input" value={opType} onChange={(e) => setOpType(e.target.value)}>
-            <option value="">— не указан —</option>
+          <label className="label">Вид операции *</label>
+          <select className="input" required value={opType} onChange={(e) => setOpType(e.target.value)}>
+            <option value="">— выберите —</option>
             {dict?.op_type?.map((o) => (
               <option key={o.id} value={o.label}>
                 {o.label}
@@ -223,14 +302,27 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
       </div>
 
       <div className="space-y-2">
-        <div className="text-sm font-medium text-slate-600">Позиции к списанию</div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-slate-600">Позиции к списанию</div>
+          <button
+            type="button"
+            className="btn-ghost text-xs disabled:opacity-40"
+            disabled={!opType || copyBusy}
+            onClick={copyFromLast}
+            title={opType ? 'Подставить позиции из прошлого списания этой операции' : 'Сначала выберите вид операции'}
+          >
+            {copyBusy ? 'Загрузка…' : '⧉ Скопировать позиции из прошлого списания'}
+          </button>
+        </div>
+        {copyMsg && <div className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-600 ring-1 ring-slate-200">{copyMsg}</div>}
         {lines.map((l) => (
           <div key={l.uid} className="grid grid-cols-12 items-start gap-2 rounded-lg border border-slate-200 p-2">
             <div className="col-span-12 sm:col-span-8">
               <label className="label">Позиция (номенклатура) *</label>
               <NomenclaturePicker
                 value={Number(l.nomenclatureId) || null}
-                onChange={(id) => setLine(l.uid, { nomenclatureId: id ? String(id) : '' })}
+                initial={l.nom ?? null}
+                onChange={(id, nom) => setLine(l.uid, { nomenclatureId: id ? String(id) : '', nom: nom ?? undefined })}
               />
             </div>
             <div className="col-span-8 sm:col-span-3">
@@ -277,11 +369,141 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
   );
 }
 
+// Правка одной позиции списания (исправление ошибки). Отдаёт PUT /writeoffs/:id —
+// сервер вернёт старый остаток в партии и начислит новый по актуальным данным.
+function EditWriteoffForm({ writeoff, onDone, onSaved }: { writeoff: Writeoff; onDone: () => void; onSaved: () => void }) {
+  const { data: cats } = useQuery({
+    queryKey: ['expense-categories'],
+    queryFn: () => apiGet<{ items: CatOption[] }>('/expense-categories'),
+  });
+  const { data: dict } = useDictionaries();
+
+  const [patient, setPatient] = useState<PatientValue>({
+    fio: writeoff.patient?.fio ?? '',
+    phone: writeoff.patient?.phone ?? '',
+    city: writeoff.patient?.city ?? '',
+    birthDate: writeoff.patient?.birthDate ?? null,
+    patientId: writeoff.patient?.id,
+  });
+  const [categoryId, setCategoryId] = useState(String(writeoff.categoryId));
+  const [opType, setOpType] = useState(writeoff.opType ?? '');
+  const [date, setDate] = useState((writeoff.date ?? '').slice(0, 10));
+  const [nomId, setNomId] = useState<number | null>(writeoff.nomenclatureId);
+  const [qty, setQty] = useState(String(writeoff.qty));
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const initialNom: NomOption = {
+    id: writeoff.nomenclatureId,
+    nameDisplay: writeoff.nomenclature?.nameDisplay ?? `#${writeoff.nomenclatureId}`,
+    unitWriteoff: writeoff.nomenclature?.unitWriteoff ?? null,
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!nomId) return setError('Выберите позицию');
+    if (!qty || Number(qty) <= 0) return setError('Укажите количество больше нуля');
+    setBusy(true);
+    try {
+      await apiPut(`/writeoffs/${writeoff.id}`, {
+        patient: {
+          fio: (patient.fio ?? '').trim(),
+          phone: (patient.phone ?? '').trim(),
+          city: patient.city || '',
+          birthDate: patient.birthDate || null,
+        },
+        operationId: writeoff.operationId ?? null,
+        opType,
+        nomenclatureId: nomId,
+        categoryId: Number(categoryId),
+        qty: Number(qty),
+        date,
+      });
+      onSaved();
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <PatientBlock value={patient} onChange={setPatient} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div>
+          <label className="label">Категория расхода *</label>
+          <select className="input" required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">— выберите —</option>
+            {cats?.items.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Вид операции *</label>
+          <select className="input" required value={opType} onChange={(e) => setOpType(e.target.value)}>
+            <option value="">— выберите —</option>
+            {dict?.op_type?.map((o) => (
+              <option key={o.id} value={o.label}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Дата *</label>
+          <input
+            type="date"
+            className="input"
+            required
+            min="2020-01-01"
+            max={new Date().toISOString().slice(0, 10)}
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-12 items-start gap-2">
+        <div className="col-span-12 sm:col-span-9">
+          <label className="label">Позиция (номенклатура) *</label>
+          <NomenclaturePicker value={nomId} initial={initialNom} onChange={(id) => setNomId(id)} />
+        </div>
+        <div className="col-span-12 sm:col-span-3">
+          <label className="label">Количество *</label>
+          <input type="number" className="input" min={0} step="any" value={qty} onChange={(e) => setQty(e.target.value)} />
+        </div>
+      </div>
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onDone}>
+          Отмена
+        </button>
+        <button type="submit" className="btn-primary" disabled={busy}>
+          {busy ? 'Сохранение…' : 'Сохранить'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // Поиск позиции номенклатуры (позиций много) — ввод фильтрует список на сервере.
 // Показывает выбранную позицию с кнопкой «сменить»; наружу отдаёт nomenclatureId.
-function NomenclaturePicker({ value, onChange }: { value: number | null; onChange: (id: number | null) => void }) {
+function NomenclaturePicker({
+  value,
+  initial,
+  onChange,
+}: {
+  value: number | null;
+  initial?: NomOption | null;
+  onChange: (id: number | null, nom?: NomOption | null) => void;
+}) {
   const [term, setTerm] = useState('');
-  const [selected, setSelected] = useState<NomOption | null>(null);
+  const [selected, setSelected] = useState<NomOption | null>(initial ?? null);
 
   const { data } = useQuery({
     queryKey: ['nomenclature', { status: 'active', search: term }],
@@ -302,7 +524,7 @@ function NomenclaturePicker({ value, onChange }: { value: number | null; onChang
           className="btn-ghost text-sm"
           onClick={() => {
             setSelected(null);
-            onChange(null);
+            onChange(null, null);
             setTerm('');
           }}
         >
@@ -331,7 +553,7 @@ function NomenclaturePicker({ value, onChange }: { value: number | null; onChang
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-100"
                 onClick={() => {
                   setSelected(n);
-                  onChange(n.id);
+                  onChange(n.id, n);
                 }}
               >
                 <span>{n.nameDisplay}</span>

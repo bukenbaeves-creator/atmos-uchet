@@ -51,3 +51,17 @@ export async function allocateWriteoff(
     allocations,
   };
 }
+
+// Откат аллокаций списания: возвращает qty каждой аллокации обратно в её партию
+// (Batch.qtyRemaining += qty) и удаляет записи аллокаций. Нужен при правке/удалении
+// списания, чтобы остаток склада не «терялся». ВЫЗЫВАТЬ ТОЛЬКО ВНУТРИ ТРАНЗАКЦИИ.
+export async function reverseWriteoffAllocations(writeoffId: number, tx: PrismaClientOrTx): Promise<void> {
+  const allocations = await tx.writeoffBatchAllocation.findMany({ where: { writeoffId } });
+  for (const a of allocations) {
+    const batch = await tx.batch.findUnique({ where: { id: a.batchId } });
+    if (batch) {
+      await tx.batch.update({ where: { id: a.batchId }, data: { qtyRemaining: batch.qtyRemaining.add(a.qty) } });
+    }
+  }
+  await tx.writeoffBatchAllocation.deleteMany({ where: { writeoffId } });
+}

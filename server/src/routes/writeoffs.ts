@@ -2,14 +2,14 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
-import { asyncHandler, badRequest } from '../lib/http.js';
+import { asyncHandler, badRequest, notFound, forbidden } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/rbac.js';
+import { requireRole, canEditRecord } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import { serialize } from '../lib/serialize.js';
-import { requiredDate, optionalString, patientInputSchema } from '../schemas.js';
+import { requiredDate, requiredString, patientInputSchema } from '../schemas.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
-import { allocateWriteoff } from '../services/costing.service.js';
+import { allocateWriteoff, reverseWriteoffAllocations } from '../services/costing.service.js';
 import { stripCost } from '../services/expense-visibility.service.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { patientSearchOR } from '../lib/search.js';
@@ -22,7 +22,7 @@ router.use(requireAuth, requireRole('nurse', 'admin'));
 const schema = z.object({
   patient: patientInputSchema,
   operationId: z.coerce.number().int().positive().optional().nullable(),
-  opType: optionalString(200), // вид операции (из справочника op_type)
+  opType: requiredString('Необходимо указать вид операции', 200), // из справочника op_type
   nomenclatureId: z.coerce.number().int().positive({ message: 'Выберите позицию' }),
   categoryId: z.coerce.number().int().positive({ message: 'Выберите категорию расхода' }),
   qty: z.coerce.number({ invalid_type_error: 'Количество должно быть числом' }).positive('Количество должно быть больше нуля').max(1_000_000),
@@ -47,7 +47,8 @@ router.get(
       prisma.expenseWriteoff.findMany({
         where,
         include: {
-          patient: { select: { id: true, fio: true } },
+          // phone/city/birthDate нужны форме правки (prefill PatientBlock)
+          patient: { select: { id: true, fio: true, phone: true, city: true, birthDate: true } },
           nomenclature: { select: { nameDisplay: true, unitWriteoff: true } },
           category: { select: { name: true } },
         },
@@ -128,7 +129,7 @@ router.post(
 const bulkSchema = z.object({
   patient: patientInputSchema,
   operationId: z.coerce.number().int().positive().optional().nullable(),
-  opType: optionalString(200), // вид операции (из справочника op_type) — общий для карточки
+  opType: requiredString('Необходимо указать вид операции', 200), // общий для карточки
   categoryId: z.coerce.number().int().positive({ message: 'Выберите категорию расхода' }),
   date: requiredDate('Необходимо указать дату'),
   lines: z
@@ -196,6 +197,118 @@ router.post(
     // Позиции, списанные при нехватке остатка (в минус) — показываем, но не блокируем.
     const shortages = created.filter((w) => w.isShortage).map((w) => w.nomenclature?.nameDisplay ?? '—');
     res.status(201).json({ created: created.length, shortages, items: stripCost(serialize(created), req.user!.role) });
+  }),
+);
+
+// Позиции из прошлого списания по виду операции — для быстрого заполнения формы.
+// Возвращает уникальные активные позиции последней «сессии» (тот же пациент+дата+opType).
+// БЕЗ количеств — их медсестра вводит сама.
+router.get(
+  '/template',
+  asyncHandler(async (req, res) => {
+    const opType = String(req.query.opType ?? '').trim();
+    if (!opType) return res.json({ positions: [] });
+    const last = await prisma.expenseWriteoff.findFirst({
+      where: { opType, deletedAt: null },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    });
+    if (!last) return res.json({ positions: [] });
+    const rows = await prisma.expenseWriteoff.findMany({
+      where: { opType, deletedAt: null, patientId: last.patientId, date: last.date },
+      include: { nomenclature: { select: { id: true, nameDisplay: true, unitWriteoff: true, status: true, deletedAt: true } } },
+      orderBy: { id: 'asc' },
+    });
+    const seen = new Set<number>();
+    const positions: { nomenclatureId: number; nameDisplay: string; unitWriteoff: string | null }[] = [];
+    for (const r of rows) {
+      const n = r.nomenclature;
+      if (!n || n.status !== 'active' || n.deletedAt || seen.has(r.nomenclatureId)) continue;
+      seen.add(r.nomenclatureId);
+      positions.push({ nomenclatureId: r.nomenclatureId, nameDisplay: n.nameDisplay, unitWriteoff: n.unitWriteoff });
+    }
+    res.json({ positions });
+  }),
+);
+
+// Общая часть include для ответа по одному списанию
+const oneInclude = {
+  patient: { select: { id: true, fio: true } },
+  nomenclature: { select: { nameDisplay: true, unitWriteoff: true } },
+  category: { select: { name: true } },
+} as const;
+
+// Правка списания (исправление ошибки). Права: админ — любую, медсестра — свою в день
+// создания (canEditRecord). Остаток пересчитывается: старые аллокации возвращаются в
+// партии, затем начисляются новые по актуальным позиции/количеству.
+router.put(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await prisma.expenseWriteoff.findFirst({ where: { id, deletedAt: null } });
+    if (!existing) throw notFound('Списание не найдено');
+    if (!canEditRecord(req.user!, existing)) {
+      throw forbidden('Правка недоступна: доступно администратору или автору в день создания.');
+    }
+    const data = schema.parse(req.body);
+    await assertDictionaryValue('op_type', data.opType);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const nom = await tx.nomenclature.findFirst({ where: { id: data.nomenclatureId, deletedAt: null } });
+      if (!nom) throw badRequest('Позиция номенклатуры не найдена');
+      if (nom.status !== 'active') throw badRequest('Позиция ещё не подтверждена администратором');
+      const cat = await tx.expenseCategory.findFirst({ where: { id: data.categoryId, isActive: true } });
+      if (!cat) throw badRequest('Категория расхода не найдена');
+      const patientId = await resolvePatient(data.patient, req, tx);
+      if (data.operationId) {
+        const op = await tx.operation.findFirst({ where: { id: data.operationId, deletedAt: null } });
+        if (!op) throw badRequest('Операция не найдена');
+        if (op.patientId !== patientId) throw badRequest('Операция принадлежит другому пациенту');
+      }
+
+      await reverseWriteoffAllocations(id, tx); // вернуть старое количество в партии
+      const alloc = await allocateWriteoff(data.nomenclatureId, new Prisma.Decimal(data.qty), tx);
+      const row = await tx.expenseWriteoff.update({
+        where: { id },
+        data: {
+          patientId,
+          operationId: data.operationId ?? null,
+          opType: data.opType,
+          nomenclatureId: data.nomenclatureId,
+          categoryId: data.categoryId,
+          qty: data.qty,
+          costTotal: alloc.costTotal,
+          isShortage: alloc.isShortage,
+          date: data.date,
+          updatedBy: req.user!.id,
+          allocations: { create: alloc.allocations.map((a) => ({ batchId: a.batchId, qty: a.qty, cost: a.cost })) },
+        },
+        include: oneInclude,
+      });
+      await writeAudit(req, { action: 'update', entity: 'writeoff', entityId: id, before: existing, after: row }, tx);
+      return row;
+    });
+
+    const warning = updated.isShortage ? 'Списано при нехватке остатка. Требуется корректировка прихода.' : undefined;
+    res.json({ ...stripCost(serialize(updated), req.user!.role), warning });
+  }),
+);
+
+// Удаление (отмена) ошибочного списания. Права как у правки. Возвращает остаток в партии.
+router.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await prisma.expenseWriteoff.findFirst({ where: { id, deletedAt: null } });
+    if (!existing) throw notFound('Списание не найдено');
+    if (!canEditRecord(req.user!, existing)) {
+      throw forbidden('Удаление недоступно: доступно администратору или автору в день создания.');
+    }
+    await prisma.$transaction(async (tx) => {
+      await reverseWriteoffAllocations(id, tx); // вернуть материал на склад
+      await tx.expenseWriteoff.update({ where: { id }, data: { deletedAt: new Date(), deletedBy: req.user!.id } });
+      await writeAudit(req, { action: 'delete', entity: 'writeoff', entityId: id, before: existing }, tx);
+    });
+    res.status(204).end();
   }),
 );
 
