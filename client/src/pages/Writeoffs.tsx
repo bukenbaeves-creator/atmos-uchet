@@ -191,13 +191,20 @@ function WriteoffForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => 
     setCopyMsg(null);
     setCopyBusy(true);
     try {
-      const res = await apiGet<{ positions: NomOption[] }>(`/writeoffs/template?opType=${encodeURIComponent(opType)}`);
+      const res = await apiGet<{ positions: { nomenclatureId: number; nameDisplay: string; unitWriteoff: string | null }[] }>(
+        `/writeoffs/template?opType=${encodeURIComponent(opType)}`,
+      );
       if (!res.positions.length) {
         setCopyMsg('Нет прошлых списаний по этой операции.');
         return;
       }
       let uid = nextUid;
-      const newLines: WLine[] = res.positions.map((p) => ({ uid: uid++, nomenclatureId: String(p.id), qty: '', nom: p }));
+      const newLines: WLine[] = res.positions.map((p) => ({
+        uid: uid++,
+        nomenclatureId: String(p.nomenclatureId),
+        qty: '',
+        nom: { id: p.nomenclatureId, nameDisplay: p.nameDisplay, unitWriteoff: p.unitWriteoff },
+      }));
       setLines(newLines);
       setNextUid(uid);
       setCopyMsg(`Подставлено позиций: ${newLines.length}. Укажите количества.`);
