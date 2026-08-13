@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
-import { ApiError } from '../lib/http.js';
+import { ApiError, asyncHandler, notFound, forbidden } from '../lib/http.js';
+import { serialize } from '../lib/serialize.js';
+import { writeAudit } from '../services/audit.service.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { computeOperation } from '../services/compute.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
@@ -25,6 +27,10 @@ const schema = z.object({
   // Разрешить создать операцию, даже если у пациента уже есть такая же на эту дату
   // (галочка в форме). Не пишется в БД — только гейт для проверки на дубль.
   confirmDuplicate: z.coerce.boolean().optional(),
+}).refine((d) => d.patient?.birthDate != null, {
+  // Для операции дата рождения пациента обязательна (в отличие от прочих форм).
+  message: 'Необходимо указать дату рождения пациента',
+  path: ['patient', 'birthDate'],
 });
 
 // Оператор правит свою операцию до «дата операции + 1 день» включительно
@@ -78,6 +84,8 @@ const router = makeCrudRouter({
   prepareData: async (data, req, ctx) => {
     const { patient, confirmDuplicate, ...rest } = data as Record<string, unknown> & { patient: never };
     const patientId = await resolvePatient(patient, req, ctx.tx);
+    // Дату операции обычным PUT НЕ меняем — только через /reschedule (с причиной, для следа).
+    if (ctx.mode === 'update') delete (rest as Record<string, unknown>).dateOp;
     // Защита от дубля: при создании — если у пациента уже есть операция того же
     // вида на ту же дату, требуем явного подтверждения «Разрешить дубль».
     if (ctx.mode === 'create' && !confirmDuplicate && rest.dateOp) {
@@ -96,5 +104,55 @@ const router = makeCrudRouter({
     return { ...rest, patientId };
   },
 });
+
+// Перенос даты операции с обязательной причиной (оставляет след в OperationReschedule).
+// Права как у правки: оператор — свою до «дата+1», админ — всегда.
+const rescheduleSchema = z.object({
+  newDate: requiredDate('Укажите новую дату операции'),
+  reason: requiredString('Укажите причину переноса', 500),
+});
+
+router.patch(
+  '/:id/reschedule',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await prisma.operation.findFirst({ where: { id, deletedAt: null } });
+    if (!existing) throw notFound('Операция не найдена');
+    if (!operationCanEdit(req.user!, existing)) {
+      throw forbidden('Перенос недоступен: доступно автору до «дата операции + 1 день» или администратору.');
+    }
+    const data = rescheduleSchema.parse(req.body);
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.operationReschedule.create({
+        data: {
+          operationId: id,
+          oldDate: existing.dateOp,
+          newDate: data.newDate,
+          reason: data.reason,
+          createdBy: req.user!.id,
+          createdByFio: req.user!.fio ?? null,
+        },
+      });
+      const row = await tx.operation.update({
+        where: { id },
+        data: { dateOp: data.newDate, updatedBy: req.user!.id },
+        include: { patient: true, consultation: true, payments: { where: { deletedAt: null } } },
+      });
+      await writeAudit(req, { action: 'update', entity: 'operation', entityId: id, before: existing, after: row }, tx);
+      return row;
+    });
+    res.json({ ...serialize(updated), ...computeOperation(updated as unknown as Parameters<typeof computeOperation>[0]) });
+  }),
+);
+
+// История переносов даты конкретной операции (для модалки).
+router.get(
+  '/:id/reschedules',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const rows = await prisma.operationReschedule.findMany({ where: { operationId: id }, orderBy: { createdAt: 'desc' } });
+    res.json({ items: serialize(rows) });
+  }),
+);
 
 export default router;

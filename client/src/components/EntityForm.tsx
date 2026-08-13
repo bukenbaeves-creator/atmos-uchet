@@ -33,6 +33,11 @@ export interface Field {
   showWhen?: (values: Record<string, unknown>) => boolean;
   // Для select: разрешить ввод своего варианта (он авто-добавится в справочник на сервере)
   allowCustom?: boolean;
+  // Для patientBlock: сделать «дату рождения» обязательной (напр. в операциях)
+  requireBirthDate?: boolean;
+  // Блокировать поле в режиме правки (значение только для чтения) — напр. дата операции,
+  // которую меняют отдельным действием с причиной.
+  lockOnEdit?: boolean;
 }
 
 interface Props {
@@ -64,6 +69,7 @@ function initialValue(field: Field, initial?: Record<string, unknown>) {
 
 export function EntityForm({ fields, initial, submitLabel = 'Сохранить', onSubmit, onDone }: Props) {
   const { data: dict } = useDictionaries();
+  const editing = initial != null; // режим правки (для lockOnEdit)
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const init = initial as Record<string, unknown> | undefined;
     const v: Record<string, unknown> = {};
@@ -143,6 +149,7 @@ export function EntityForm({ fields, initial, submitLabel = 'Сохранить'
               onChange={(v) => set(f.name, v)}
               options={f.dict ? dict?.[f.dict] ?? [] : []}
               form={values}
+              editing={editing}
             />
           </div>
         ))}
@@ -267,17 +274,20 @@ function FieldControl({
   onChange,
   options,
   form,
+  editing,
 }: {
   field: Field;
   value: unknown;
   onChange: (v: unknown) => void;
   options: { id: number; label: string }[];
   form: Record<string, unknown>;
+  editing?: boolean;
 }) {
   const opts = useMemo(() => options, [options]);
+  const locked = Boolean(field.lockOnEdit && editing);
   switch (field.type) {
     case 'patientBlock':
-      return <PatientBlock value={value as PatientValue} onChange={(v) => onChange(v)} />;
+      return <PatientBlock value={value as PatientValue} onChange={(v) => onChange(v)} requireBirthDate={field.requireBirthDate} />;
     case 'operation': {
       const patient = form.patient as PatientValue | undefined;
       return (
@@ -335,17 +345,21 @@ function FieldControl({
     case 'date':
       // Разумные границы бизнес-дат (совпадают с серверной проверкой): не раньше
       // 2020 и не позже «сегодня + 2 года». Будущее разрешено (плановые операции,
-      // оплата раньше консультации).
+      // оплата раньше консультации). locked — только чтение в режиме правки.
       return (
-        <input
-          type="date"
-          className="input"
-          required={field.required}
-          min={DATE_INPUT_MIN}
-          max={DATE_INPUT_MAX}
-          value={(value as string) ?? ''}
-          onChange={(e) => onChange(e.target.value)}
-        />
+        <div>
+          <input
+            type="date"
+            className="input disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+            required={field.required && !locked}
+            disabled={locked}
+            min={DATE_INPUT_MIN}
+            max={DATE_INPUT_MAX}
+            value={(value as string) ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {locked && <div className="mt-1 text-xs text-slate-400">Менять дату — кнопкой «Перенести дату» (с причиной).</div>}
+        </div>
       );
     case 'time':
       return <input type="time" className="input" value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} />;

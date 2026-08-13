@@ -168,8 +168,9 @@ model Operation {
   contractSigned   Boolean       @default(false)
   note             String?
 
-  payments  Payment[]
-  writeoffs ExpenseWriteoff[]
+  payments    Payment[]
+  writeoffs   ExpenseWriteoff[]
+  reschedules OperationReschedule[]
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -180,6 +181,21 @@ model Operation {
 
   @@index([patientId])
   @@index([dateOp])
+}
+
+// История переносов даты операции — «след» с обязательной причиной.
+model OperationReschedule {
+  id           Int       @id @default(autoincrement())
+  operation    Operation @relation(fields: [operationId], references: [id])
+  operationId  Int
+  oldDate      DateTime? // прежняя дата операции (может быть пустой)
+  newDate      DateTime // новая дата
+  reason       String // причина переноса (обязательна)
+  createdBy    Int?
+  createdByFio String? // денормализовано — чтобы показывать «кто» без join
+  createdAt    DateTime  @default(now())
+
+  @@index([operationId])
 }
 
 model Payment {

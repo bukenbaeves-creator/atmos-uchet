@@ -24,7 +24,15 @@ interface Patient {
 
 // Ввод пациента прямо в форме журнала: поиск существующего (автоподстановка по
 // ФИО/телефону) ИЛИ ввод нового. На сервере пациент находится/создаётся по телефону.
-export function PatientBlock({ value, onChange }: { value: PatientValue; onChange: (v: PatientValue) => void }) {
+export function PatientBlock({
+  value,
+  onChange,
+  requireBirthDate = false,
+}: {
+  value: PatientValue;
+  onChange: (v: PatientValue) => void;
+  requireBirthDate?: boolean;
+}) {
   const v = value || {};
   const set = (k: keyof PatientValue, val: unknown) => onChange({ ...v, [k]: val });
   const { data: dict } = useDictionaries();
@@ -111,10 +119,11 @@ export function PatientBlock({ value, onChange }: { value: PatientValue; onChang
           </select>
         </div>
         <div>
-          <label className="label">Дата рождения</label>
+          <label className="label">Дата рождения{requireBirthDate ? ' *' : ''}</label>
           <input
             type="date"
             className="input"
+            required={requireBirthDate}
             min="1900-01-01"
             max={new Date().toISOString().slice(0, 10)}
             value={(v.birthDate as string) ?? ''}
