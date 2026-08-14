@@ -28,6 +28,10 @@ function contentSignature(rows: ParsedLine[]): string {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// Многострочные приходы (десятки позиций) в одной транзакции — на проде (Neon) дефолтные
+// 5с малы. Поднимаем таймаут, чтобы не падало с P2028 «Внутренняя ошибка сервера».
+const BULK_TX_OPTS = { maxWait: 20_000, timeout: 120_000 };
+
 // Приход на склад. Создаёт документ и партии; наименования сопоставляются со
 // справочником номенклатуры (новые попадают в draft на модерацию). Цена закупа —
 // только для admin (в ответе усечена для остальных).
@@ -169,7 +173,7 @@ router.post(
       const full = await tx.receipt.findUnique({ where: { id: receipt.id }, include: receiptInclude });
       await writeAudit(req, { action: 'create', entity: 'receipt', entityId: receipt.id, after: { status: receipt.status, lines: data.lines.length } }, tx);
       return full;
-    });
+    }, BULK_TX_OPTS);
     res.status(201).json(stripCost(serialize(created), req.user!.role));
   }),
 );
@@ -262,7 +266,7 @@ router.post(
         tx,
       );
       return receipt.id;
-    });
+    }, BULK_TX_OPTS);
 
     res.json({ imported: rows.length, valid: rows.length, blocked: false, blockReason: null, pending: !isAdmin, errors, warnings, header, receiptId });
   }),
@@ -315,7 +319,7 @@ router.patch(
       });
       await writeAudit(req, { action: 'update', entity: 'receipt', entityId: id, after: { status: 'approved', approved: lines.length } }, tx);
       return updated;
-    });
+    }, BULK_TX_OPTS);
     res.json(stripCost(serialize(approved), req.user!.role));
   }),
 );

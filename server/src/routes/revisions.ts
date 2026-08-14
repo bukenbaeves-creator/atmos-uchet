@@ -11,6 +11,9 @@ import { stripCost } from '../services/expense-visibility.service.js';
 import { optionalString } from '../schemas.js';
 import { reduceStock } from '../services/revision.service.js';
 
+// Ревизия на десятки позиций в одной транзакции — на проде (Neon) дефолтные 5с малы.
+const BULK_TX_OPTS = { maxWait: 20_000, timeout: 120_000 };
+
 // Ревизия (инвентаризация) склада. Читают/заполняют nurse и admin; ПРИМЕНЯЕТ
 // (проводит корректировки остатков) только admin. Все изменения партий — в транзакции.
 const router = Router();
@@ -94,7 +97,7 @@ router.post(
       });
       await writeAudit(req, { action: 'create', entity: 'revision', entityId: revision.id, after: { items: noms.length } }, tx);
       return revision;
-    });
+    }, BULK_TX_OPTS);
     res.status(201).json(stripCost(serialize(created), req.user!.role));
   }),
 );
@@ -131,7 +134,7 @@ router.put(
         });
       }
       await tx.revision.update({ where: { id }, data: { updatedBy: req.user!.id } });
-    });
+    }, BULK_TX_OPTS);
 
     const full = await prisma.revision.findFirst({ where: { id }, include: revInclude });
     res.json(stripCost(serialize(full), req.user!.role));
@@ -206,7 +209,7 @@ router.patch(
       });
       await writeAudit(req, { action: 'update', entity: 'revision', entityId: id, before: rev, after: { status: 'applied', applied: counted.length } }, tx);
       return updated;
-    });
+    }, BULK_TX_OPTS);
     res.json(stripCost(serialize(applied), req.user!.role));
   }),
 );

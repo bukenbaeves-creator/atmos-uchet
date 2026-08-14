@@ -19,6 +19,10 @@ import { patientSearchOR } from '../lib/search.js';
 const router = Router();
 router.use(requireAuth, requireRole('nurse', 'admin'));
 
+// Bulk-списание десятков позиций — одна транзакция с сотнями запросов; на проде (Neon,
+// сетевые задержки) дефолтные 5с малы → P2028 «Внутренняя ошибка сервера». Поднимаем таймаут.
+const TX_OPTS = { maxWait: 20_000, timeout: 120_000 };
+
 const schema = z.object({
   patient: patientInputSchema,
   operationId: z.coerce.number().int().positive().optional().nullable(),
@@ -113,7 +117,7 @@ router.post(
       });
       await writeAudit(req, { action: 'create', entity: 'writeoff', entityId: writeoff.id, after: writeoff }, tx);
       return writeoff;
-    });
+    }, TX_OPTS);
 
     // Предупреждение о нехватке остатка — не блокирует, показывается пользователю
     const warning = result.isShortage
@@ -192,7 +196,7 @@ router.post(
         rows.push(writeoff);
       }
       return rows;
-    });
+    }, TX_OPTS);
 
     // Позиции, списанные при нехватке остатка (в минус) — показываем, но не блокируем.
     const shortages = created.filter((w) => w.isShortage).map((w) => w.nomenclature?.nameDisplay ?? '—');

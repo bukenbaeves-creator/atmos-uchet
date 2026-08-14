@@ -23,6 +23,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     if (err.code === 'P2025') {
       return res.status(404).json({ error: 'Запись не найдена' });
     }
+    // P2028 — таймаут интерактивной транзакции (напр. очень большое списание на медленной БД).
+    if (err.code === 'P2028') {
+      return res.status(503).json({ error: 'Операция заняла слишком долго. Повторите или разбейте на меньшие части.' });
+    }
   }
   if (err instanceof Prisma.PrismaClientValidationError) {
     console.error('Prisma validation:', err.message);
