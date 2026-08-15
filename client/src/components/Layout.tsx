@@ -23,7 +23,7 @@ const SALES: Role[] = ['operator', 'admin'];
 const SECTIONS: Section[] = [
   {
     items: [
-      { to: '/patients', label: 'Пациенты', icon: '🧑' },
+      { to: '/patients', label: 'Пациенты', icon: '🧑', roles: SALES },
       { to: '/cashbox', label: 'Касса', icon: '🧾', roles: SALES },
     ],
   },
@@ -48,6 +48,7 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Настройки',
+    roles: SALES,
     items: [{ to: '/dictionaries', label: 'Справочники', icon: '📚' }],
   },
   {

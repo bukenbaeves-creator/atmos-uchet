@@ -70,8 +70,10 @@ export function App() {
         }
       >
         <Route path="/" element={<Home />} />
-        <Route path="/patients" element={<Patients />} />
-        <Route path="/patients/:id" element={<PatientCard />} />
+        {/* Пациенты и финансовая карточка — скрыты от медсестры (поиск пациента для
+            списания идёт отдельно через PatientBlock, не через эти страницы) */}
+        <Route path="/patients" element={<RequireRole roles={SALES}><Patients /></RequireRole>} />
+        <Route path="/patients/:id" element={<RequireRole roles={SALES}><PatientCard /></RequireRole>} />
         {/* Модуль расходов — доступен медсестре и администратору */}
         <Route path="/writeoffs" element={<Writeoffs />} />
         <Route path="/stock" element={<Stock />} />
@@ -87,7 +89,7 @@ export function App() {
         <Route path="/cashbox" element={<RequireRole roles={SALES}><Cashbox /></RequireRole>} />
         <Route path="/reconcile" element={<RequireRole roles={SALES}><Reconcile /></RequireRole>} />
         <Route path="/kpi" element={<RequireRole roles={SALES}><Kpi /></RequireRole>} />
-        <Route path="/dictionaries" element={<Dictionaries />} />
+        <Route path="/dictionaries" element={<RequireRole roles={SALES}><Dictionaries /></RequireRole>} />
         <Route path="/errors" element={<RequireRole roles={SALES}><ErrorCheck /></RequireRole>} />
         <Route
           path="/audit"

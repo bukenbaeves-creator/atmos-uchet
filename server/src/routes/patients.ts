@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler, badRequest, notFound } from '../lib/http.js';
-import { requireAdmin } from '../middleware/rbac.js';
+import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
 import { normalizePhone } from '../lib/phone.js';
 import { computeOperation, round2 } from '../services/compute.js';
@@ -97,8 +97,11 @@ const router = makeCrudRouter({
 });
 
 // Карточка пациента: полная история + суммарный остаток (раздел 9.2 ТЗ).
+// Содержит финансы — закрыта от медсестры (только оператор/админ). Поиск пациента для
+// формы списания идёт через GET '/' (?search) и остаётся доступен всем ролям.
 router.get(
   '/:id/card',
+  requireRole('operator', 'admin'),
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const patient = await prisma.patient.findFirst({

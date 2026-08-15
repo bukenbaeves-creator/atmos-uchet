@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler, badRequest } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import {
   DICTIONARY_CATEGORIES,
@@ -13,7 +14,11 @@ import {
 const router = Router();
 router.use(requireAuth);
 
-// Все справочники разом (для селектов на клиенте)
+// Редактировать справочник и открывать экран управления могут только оператор/админ.
+// Медсестре доступен ТОЛЬКО GET '/' (значения для выпадающих списков в форме списания).
+const manageOnly = requireRole('operator', 'admin');
+
+// Все справочники разом (для селектов на клиенте) — доступно всем ролям
 router.get(
   '/',
   asyncHandler(async (_req, res) => {
@@ -21,9 +26,10 @@ router.get(
   }),
 );
 
-// Список значений категории (для экрана управления справочниками)
+// Список значений категории (для экрана управления справочниками) — оператор/админ
 router.get(
   '/:category',
+  manageOnly,
   asyncHandler(async (req, res) => {
     const category = req.params.category;
     if (!DICTIONARY_CATEGORIES.includes(category as never)) throw badRequest('Неизвестная категория');
@@ -38,9 +44,10 @@ const itemSchema = z.object({
   active: z.coerce.boolean().default(true),
 });
 
-// Справочниками управляют и операторы, и админы (requireAuth на роутере).
+// Справочниками управляют оператор и админ (медсестра — нет).
 router.post(
   '/',
+  manageOnly,
   asyncHandler(async (req, res) => {
     const data = itemSchema.parse(req.body);
     const created = await prisma.dictionaryItem.create({ data });
@@ -51,6 +58,7 @@ router.post(
 
 router.put(
   '/:id',
+  manageOnly,
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const before = await prisma.dictionaryItem.findUnique({ where: { id } });
@@ -71,6 +79,7 @@ router.put(
 // Деактивация значения (мягко — историю не ломаем)
 router.delete(
   '/:id',
+  manageOnly,
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const before = await prisma.dictionaryItem.findUnique({ where: { id } });
