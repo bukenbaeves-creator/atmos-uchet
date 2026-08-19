@@ -29,6 +29,11 @@ import expenseExportRouter from './routes/expense-export.js';
 import expenseAnalyticsRouter from './routes/expense-analytics.js';
 import revisionsRouter from './routes/revisions.js';
 import backupRouter from './routes/backup.js';
+// Модуль «Выплаты врачам» — конструктор (Э0-3)
+import payoutPayeesRouter from './routes/payouts/payees.js';
+import payoutComponentsRouter from './routes/payouts/components.js';
+import payoutRatesRouter from './routes/payouts/rates.js';
+import payoutSchemesRouter from './routes/payouts/schemes.js';
 
 const app = express();
 
@@ -100,6 +105,11 @@ app.use('/api/expense-export', expenseExportRouter);
 app.use('/api/expense-analytics', expenseAnalyticsRouter);
 app.use('/api/revisions', revisionsRouter);
 app.use('/api/backup', backupRouter);
+// Выплаты врачам — конструктор. Специфичные пути (payees/components) до общего /payouts.
+app.use('/api/payouts/payees', payoutPayeesRouter);
+app.use('/api/payouts/components', payoutComponentsRouter);
+app.use('/api/payouts/schemes', payoutSchemesRouter);
+app.use('/api/payouts', payoutRatesRouter); // /rates/acquiring, /tariffs/anesthesia, /norms
 
 // Production: раздаём собранный фронтенд (single-origin) + SPA-fallback.
 // В dev папки public нет — блок пропускается, клиент обслуживает Vite.

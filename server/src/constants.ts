@@ -116,6 +116,31 @@ export const CITIES = [
   'Костанай',
 ];
 
+// ===== Модуль «Выплаты врачам» =====
+
+// Системные компоненты расчёта выплат. Создаются сидом с isSystem:true (idempotent
+// upsert по code, см. seed/index.ts). Ставки эквайринга сидом НЕ создаются — их
+// отсутствие должно приводить к явной ошибке расчёта, а не к молчаливому нулю.
+import type { ComponentValueSource, ComponentDirection, CalcStage } from '@prisma/client';
+
+export const PAYOUT_COMPONENTS: {
+  code: string;
+  name: string;
+  valueSource: ComponentValueSource;
+  direction: ComponentDirection;
+  defaultStage: CalcStage;
+  operationField: string | null;
+}[] = [
+  { code: 'acquiring', name: 'Комиссия банка', valueSource: 'pct_of_payments', direction: 'deduction', defaultStage: 'before_share', operationField: null },
+  { code: 'anesthesia', name: 'Наркоз / седация', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'anesthesiaCost' },
+  { code: 'implants', name: 'Импланты', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'implantsCost' },
+  { code: 'materials', name: 'Расходные материалы', valueSource: 'warehouse_or_norm', direction: 'deduction', defaultStage: 'before_share', operationField: null },
+  { code: 'assistant', name: 'Медсестра / ассистент', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'assistantCost' },
+  { code: 'operation_tax', name: 'Налог с операции', valueSource: 'pct_of_base', direction: 'deduction', defaultStage: 'before_share', operationField: null },
+  { code: 'day_rent', name: 'Аренда операционного дня', valueSource: 'per_day', direction: 'deduction', defaultStage: 'after_share', operationField: null },
+  { code: 'admin_bonus', name: 'Бонус администратора', valueSource: 'table_by_source', direction: 'deduction', defaultStage: 'after_share', operationField: null },
+];
+
 // Соответствие категория справочника -> список значений (для сида)
 export const DICTIONARY_SEED: Record<string, string[]> = {
   city: CITIES,

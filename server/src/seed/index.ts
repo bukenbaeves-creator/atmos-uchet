@@ -16,6 +16,7 @@ import {
   CITIES,
   MANAGERS,
   KPI_DEFAULTS,
+  PAYOUT_COMPONENTS,
 } from '../constants.js';
 
 // ------- утилиты случайных значений (сид, Math.random допустим) -------
@@ -136,6 +137,26 @@ async function main() {
   for (const [key, value] of Object.entries(KPI_DEFAULTS)) {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
   }
+
+  // 1e) Системные компоненты расчёта выплат врачам (модуль «Выплаты»). Idempotent
+  //     по code: существующие не перезаписываем (админ мог отредактировать). Ставки
+  //     эквайринга сидом НЕ создаём — их отсутствие даёт явную ошибку расчёта.
+  for (const c of PAYOUT_COMPONENTS) {
+    await prisma.calcComponent.upsert({
+      where: { code: c.code },
+      update: {},
+      create: {
+        code: c.code,
+        name: c.name,
+        valueSource: c.valueSource,
+        direction: c.direction,
+        defaultStage: c.defaultStage,
+        operationField: c.operationField,
+        isSystem: true,
+      },
+    });
+  }
+  console.log(`▶ Сид: системные компоненты расчёта выплат (${PAYOUT_COMPONENTS.length}).`);
 
   // 1d) Бэкфилл менеджеров для существующих демо-записей (где не заполнено)
   const consNoMgr = await prisma.consultation.findMany({ where: { manager: null }, select: { id: true } });

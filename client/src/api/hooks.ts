@@ -35,6 +35,15 @@ const RELATED_KEYS: Record<string, string[]> = {
   // Модуль расходов: списание меняет остаток склада; приход меняет склад и номенклатуру
   writeoffs: ['writeoffs', 'stock', 'nomenclature', 'patients'],
   receipts: ['receipts', 'stock', 'nomenclature'],
+  // Модуль выплат врачам: справочники конструктора. Ключи совпадают с queryKey
+  // вкладок экрана «Настройки выплат» (PayoutSettings). Схема зависит от врачей и
+  // компонентов, поэтому её ключ инвалидируется вместе с ними.
+  'payout-payees': ['payout-payees', 'payout-schemes'],
+  'payout-components': ['payout-components', 'payout-schemes'],
+  'payout-acquiring': ['payout-acquiring'],
+  'payout-anesthesia': ['payout-anesthesia'],
+  'payout-norms': ['payout-norms'],
+  'payout-schemes': ['payout-schemes'],
 };
 
 // Универсальные мутации CRUD

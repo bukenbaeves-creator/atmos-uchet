@@ -22,6 +22,7 @@ import { Nomenclature } from './pages/Nomenclature';
 import { Receipts } from './pages/Receipts';
 import { Revisions, RevisionDetail } from './pages/Revisions';
 import { ExpenseAnalytics } from './pages/ExpenseAnalytics';
+import { PayoutSettings } from './pages/PayoutSettings';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -91,6 +92,14 @@ export function App() {
         <Route path="/kpi" element={<RequireRole roles={SALES}><Kpi /></RequireRole>} />
         <Route path="/dictionaries" element={<RequireRole roles={SALES}><Dictionaries /></RequireRole>} />
         <Route path="/errors" element={<RequireRole roles={SALES}><ErrorCheck /></RequireRole>} />
+        <Route
+          path="/payouts/settings"
+          element={
+            <RequireAdmin>
+              <PayoutSettings />
+            </RequireAdmin>
+          }
+        />
         <Route
           path="/audit"
           element={
