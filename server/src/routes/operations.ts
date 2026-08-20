@@ -12,6 +12,7 @@ import { resolvePatient } from '../services/patient-resolve.service.js';
 import { patientInputSchema, requiredDate, requiredString, optionalString, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
 import { dateRange, eqStr } from '../lib/filters.js';
+import { recalcOperation } from '../services/payout-engine.service.js';
 
 // Один участник операции (Э1-3). Используется и в схеме операции, и в хуках синхронизации.
 const participantSchema = z.object({
@@ -184,14 +185,22 @@ const router = makeCrudRouter({
   // Участников синхронизируем в той же транзакции. Если поле participants в запросе
   // отсутствует (старый клиент) — набор участников не трогаем.
   afterCreate: async (created, req, tx) => {
-    if (req.body?.participants === undefined) return;
-    const parts = z.array(participantSchema).parse(req.body.participants ?? []);
-    await syncParticipants(tx, created.id as number, created.surgeon as string | null, parts, req.user!.id);
+    if (req.body?.participants !== undefined) {
+      const parts = z.array(participantSchema).parse(req.body.participants ?? []);
+      await syncParticipants(tx, created.id as number, created.surgeon as string | null, parts, req.user!.id);
+    }
+    await recalcOperation(created.id as number, tx); // Э2-3: пересчёт начислений
   },
   afterUpdate: async (updated, _before, req, tx) => {
-    if (req.body?.participants === undefined) return;
-    const parts = z.array(participantSchema).parse(req.body.participants ?? []);
-    await syncParticipants(tx, updated.id as number, updated.surgeon as string | null, parts, req.user!.id);
+    if (req.body?.participants !== undefined) {
+      const parts = z.array(participantSchema).parse(req.body.participants ?? []);
+      await syncParticipants(tx, updated.id as number, updated.surgeon as string | null, parts, req.user!.id);
+    }
+    await recalcOperation(updated.id as number, tx);
+  },
+  // Мягкое удаление операции → снять свободные начисления (движок сам это делает).
+  afterDelete: async (record, _req, tx) => {
+    await recalcOperation(record.id as number, tx);
   },
 });
 

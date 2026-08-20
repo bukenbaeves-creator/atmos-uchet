@@ -57,7 +57,13 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
       writeoffs: { where: { deletedAt: null } },
     },
   });
-  if (!op || !op.dateOp) return;
+  // Операция удалена/не найдена или без участников → снять свободные начисления
+  // (заблокированные/оплаченные не трогаем — неизменность ведомости). Быстрый путь.
+  if (!op || op.participants.length === 0) {
+    await tx.payoutAccrual.deleteMany({ where: { operationId, status: 'free' } });
+    return;
+  }
+  if (!op.dateOp) return;
 
   const acquiringRates: AcquiringRateInput[] = (await tx.acquiringRate.findMany({})).map((r) => ({
     terminal: r.terminal,
@@ -100,6 +106,7 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
   // Обрабатываем участников со схемой типа share_based. Анестезиолог (тариф) считается
   // на уровне ведомости целиком за период — здесь пропускаем.
   for (const part of op.participants) {
+   try {
     const scheme = await getSchemeForDate(part.payeeId, op.dateOp, tx);
     if (!scheme || scheme.kind !== 'share_based') continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
 
@@ -166,5 +173,11 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
         await tx.payoutAccrual.delete({ where: { id: e.id } });
       }
     }
+   } catch {
+     // Ошибка расчёта по участнику (нет доли для источника, нет ставки эквайринга,
+     // кривая схема) НЕ должна ломать кассу/операции. Начисления по этому участнику
+     // не создаём — операция становится кандидатом в «Сигналы» дашборда.
+     continue;
+   }
   }
 }

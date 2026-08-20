@@ -52,6 +52,9 @@ export interface CrudConfig {
   // Кастомное правило права на редактирование (иначе — общее canEditRecord:
   // оператор правит свою запись в день создания).
   canEdit?: (user: { id: number; role: string }, record: Record<string, unknown>) => boolean;
+  // Хук после мягкого удаления (например, пересчёт начислений выплат по операции).
+  // Вызывается в той же транзакции; record — запись до удаления. По умолчанию ничего не делает.
+  afterDelete?: (record: Record<string, unknown>, req: Request, tx: PrismaClientOrTx) => Promise<void>;
 }
 
 async function present(cfg: CrudConfig, row: Record<string, unknown>) {
@@ -176,6 +179,7 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
         // Каскад: удаление пациента/операции мягко удаляет связанные деньги,
         // иначе их платежи продолжали бы учитываться в выручке (осиротевшие).
         await cascadeSoftDelete(cfg.entity, id, req, tx);
+        if (cfg.afterDelete) await cfg.afterDelete(existing, req, tx);
       });
       res.json({ ok: true });
     }),

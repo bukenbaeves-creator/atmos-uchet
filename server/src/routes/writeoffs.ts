@@ -6,6 +6,7 @@ import { asyncHandler, badRequest, notFound, forbidden } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole, canEditRecord } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
+import { recalcOperation } from '../services/payout-engine.service.js';
 import { serialize } from '../lib/serialize.js';
 import { requiredDate, requiredString, patientInputSchema } from '../schemas.js';
 import { resolvePatient } from '../services/patient-resolve.service.js';
@@ -116,6 +117,7 @@ router.post(
         },
       });
       await writeAudit(req, { action: 'create', entity: 'writeoff', entityId: writeoff.id, after: writeoff }, tx);
+      if (data.operationId) await recalcOperation(data.operationId, tx); // Э2-3: себестоимость → база
       return writeoff;
     }, TX_OPTS);
 
@@ -195,6 +197,7 @@ router.post(
         await writeAudit(req, { action: 'create', entity: 'writeoff', entityId: writeoff.id, after: writeoff }, tx);
         rows.push(writeoff);
       }
+      if (data.operationId) await recalcOperation(data.operationId, tx); // Э2-3: все строки — одна операция
       return rows;
     }, TX_OPTS);
 
@@ -289,6 +292,11 @@ router.put(
         include: oneInclude,
       });
       await writeAudit(req, { action: 'update', entity: 'writeoff', entityId: id, before: existing, after: row }, tx);
+      // Э2-3: пересчёт по прежней и новой операции (себестоимость могла переехать).
+      const opIds = new Set<number>();
+      if (existing.operationId) opIds.add(existing.operationId);
+      if (data.operationId) opIds.add(data.operationId);
+      for (const oid of opIds) await recalcOperation(oid, tx);
       return row;
     });
 
@@ -311,6 +319,7 @@ router.delete(
       await reverseWriteoffAllocations(id, tx); // вернуть материал на склад
       await tx.expenseWriteoff.update({ where: { id }, data: { deletedAt: new Date(), deletedBy: req.user!.id } });
       await writeAudit(req, { action: 'delete', entity: 'writeoff', entityId: id, before: existing }, tx);
+      if (existing.operationId) await recalcOperation(existing.operationId, tx); // Э2-3
     });
     res.status(204).end();
   }),

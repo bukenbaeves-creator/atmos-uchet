@@ -16,6 +16,7 @@ import { patientSearchOR } from '../lib/search.js';
 import { dateRange, eqStr } from '../lib/filters.js';
 import { PREPAYMENT_SERVICE } from '../constants.js';
 import { writeAudit } from '../services/audit.service.js';
+import { recalcOperation } from '../services/payout-engine.service.js';
 
 // Виды услуг, для которых нужен «вид операции»
 const OP_SERVICES = ['Операция', 'Консультация', PREPAYMENT_SERVICE];
@@ -185,6 +186,20 @@ const router = makeCrudRouter({
 
     return { ...rest, patientId, operationId };
   },
+  // Триггеры пересчёта выплат (Э2-3): любое изменение платежа пересчитывает начисления
+  // по его операции в той же транзакции.
+  afterCreate: async (created, _req, tx) => {
+    if (created.operationId) await recalcOperation(created.operationId as number, tx);
+  },
+  afterUpdate: async (updated, before, _req, tx) => {
+    const ids = new Set<number>();
+    if (before.operationId) ids.add(before.operationId as number);
+    if (updated.operationId) ids.add(updated.operationId as number);
+    for (const id of ids) await recalcOperation(id, tx);
+  },
+  afterDelete: async (record, _req, tx) => {
+    if (record.operationId) await recalcOperation(record.operationId as number, tx);
+  },
 });
 
 // Возврат денег пациенту (оператор и админ). Отдельная денежная операция:
@@ -230,6 +245,7 @@ router.post(
         include: { patient: true, operation: true },
       });
       await writeAudit(req, { action: 'create', entity: 'payment', entityId: refund.id, after: refund }, tx);
+      if (d.operationId) await recalcOperation(d.operationId, tx); // возврат меняет коэффициент оплаты
       return refund;
     });
     res.status(201).json(created);
