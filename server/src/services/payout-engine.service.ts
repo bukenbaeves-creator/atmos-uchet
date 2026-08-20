@@ -20,7 +20,7 @@ const toISODate = (d: Date): string => d.toISOString().slice(0, 10);
 type ComponentRow = { id: number; code: string; name: string; valueSource: string; direction: string; operationField: string | null };
 
 // Собираем CalcScheme (вход чистой функции) из строк БД схемы.
-function buildCalcScheme(dbScheme: Record<string, any>, componentsById: Map<number, ComponentRow>): CalcScheme {
+export function buildCalcScheme(dbScheme: Record<string, any>, componentsById: Map<number, ComponentRow>): CalcScheme {
   const shareBySource: Record<string, number> = {};
   for (const sv of dbScheme.shareValues ?? []) shareBySource[sv.key] = Number(sv.share);
   const components: CalcComponentInput[] = (dbScheme.items ?? []).map((it: Record<string, any>) => {
@@ -47,8 +47,15 @@ function buildCalcScheme(dbScheme: Record<string, any>, componentsById: Map<numb
   };
 }
 
+// Преднагруженный справочный контекст для массового пересчёта («данные читать пакетно»):
+// ставки и компоненты одинаковы для всех операций, поэтому их можно загрузить один раз.
+export interface RecalcContext {
+  acquiringRates?: AcquiringRateInput[];
+  componentsById?: Map<number, ComponentRow>;
+}
+
 // Пересчёт всех начислений по операции. Вызывать в той же транзакции, что и триггер.
-export async function recalcOperation(operationId: number, tx: PrismaClientOrTx): Promise<void> {
+export async function recalcOperation(operationId: number, tx: PrismaClientOrTx, ctx?: RecalcContext): Promise<void> {
   const op = await tx.operation.findFirst({
     where: { id: operationId, deletedAt: null },
     include: {
@@ -65,11 +72,13 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
   }
   if (!op.dateOp) return;
 
-  const acquiringRates: AcquiringRateInput[] = (await tx.acquiringRate.findMany({})).map((r) => ({
-    terminal: r.terminal,
-    ratePct: Number(r.ratePct),
-    validFrom: toISODate(r.validFrom),
-  }));
+  const acquiringRates: AcquiringRateInput[] =
+    ctx?.acquiringRates ??
+    (await tx.acquiringRate.findMany({})).map((r) => ({
+      terminal: r.terminal,
+      ratePct: Number(r.ratePct),
+      validFrom: toISODate(r.validFrom),
+    }));
   // Факт со склада: сумма себестоимости списаний; при отсутствии списаний — null (подставится норматив).
   const materialsFact = op.writeoffs.length ? round2(op.writeoffs.reduce((s, w) => s + Number(w.costTotal), 0)) : null;
   let materialNorm: number | null = null;
@@ -81,9 +90,9 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
     materialNorm = norm ? Number(norm.amount) : null;
   }
 
-  const componentsById = new Map<number, ComponentRow>(
-    (await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]),
-  );
+  const componentsById =
+    ctx?.componentsById ??
+    new Map<number, ComponentRow>((await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]));
 
   // Платежи по возрастанию даты (при равенстве — по id).
   const payments = [...op.payments].sort((a, b) => {
@@ -180,4 +189,17 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx)
      continue;
    }
   }
+}
+
+// Пакетная загрузка справочного контекста для массового пересчёта (Э2-4).
+export async function loadRecalcContext(tx: PrismaClientOrTx): Promise<RecalcContext> {
+  const acquiringRates: AcquiringRateInput[] = (await tx.acquiringRate.findMany({})).map((r) => ({
+    terminal: r.terminal,
+    ratePct: Number(r.ratePct),
+    validFrom: toISODate(r.validFrom),
+  }));
+  const componentsById = new Map<number, ComponentRow>(
+    (await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]),
+  );
+  return { acquiringRates, componentsById };
 }
