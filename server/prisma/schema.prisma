@@ -174,6 +174,7 @@ model Operation {
   writeoffs    ExpenseWriteoff[]
   reschedules  OperationReschedule[]
   participants OperationParticipant[] // участники операции (Э1-1)
+  payoutAccruals PayoutAccrual[] // начисления выплат (Э2-2)
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -563,7 +564,7 @@ model DoctorPayee {
   note            String?
 
   schemes      PayoutScheme[]
-  // accruals     PayoutAccrual[]        // добавится в Э2-2
+  accruals     PayoutAccrual[] // Э2-2
   // sheetLines   PayoutSheetLine[]      // добавится в Э3-1
   participants OperationParticipant[] // Э1-1
 
@@ -755,4 +756,41 @@ model OperationParticipant {
   @@unique([operationId, payeeId, role])
   @@index([operationId])
   @@index([payeeId])
+}
+
+/// Начисление — СОБЫТИЕ, а не строка за месяц. Создаётся при поступлении денег
+/// по операции (eventDate = дата платежа) либо как корректировка.
+/// Одно начисление может попасть максимум в одну ведомость (sheetId). (Э2-2)
+model PayoutAccrual {
+  id            Int         @id @default(autoincrement())
+  payee         DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId       Int
+  operation     Operation   @relation(fields: [operationId], references: [id])
+  operationId   Int
+  schemeId      Int // какая схема применена
+  schemeVersion Int
+
+  triggerPaymentId Int? // платёж, породивший начисление (null для корректировок)
+  eventDate        DateTime // ДАТА СОБЫТИЯ — по ней идёт отбор в ведомость
+  isCorrection     Boolean  @default(false)
+
+  base       Decimal @db.Decimal(14, 2) // база начисления
+  paidRatio  Decimal @db.Decimal(6, 4) // коэффициент оплаты после события
+  sharePct   Decimal @db.Decimal(6, 4)
+  components Json // [{code,label,stage,direction,amount,source:'auto'|'manual',comment}]
+  amountFull Decimal @db.Decimal(14, 2) // начисление при 100% оплате
+  amount     Decimal @db.Decimal(14, 2) // дельта события (может быть отрицательной)
+  calcTrace  Json // пошаговый расчёт для экрана «Как посчитано»
+
+  status  AccrualStatus @default(free)
+  // sheet   PayoutSheet?  @relation(fields: [sheetId], references: [id]) // связь добавится в Э3-1
+  sheetId Int? // заполняется при утверждении ведомости
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([payeeId, status, eventDate])
+  @@index([operationId])
+  @@index([sheetId])
+  @@index([status, eventDate])
 }
