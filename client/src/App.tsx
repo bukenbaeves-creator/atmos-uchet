@@ -24,6 +24,8 @@ import { Revisions, RevisionDetail } from './pages/Revisions';
 import { ExpenseAnalytics } from './pages/ExpenseAnalytics';
 import { PayoutSettings } from './pages/PayoutSettings';
 import { AccrualTrace } from './pages/payouts/AccrualTrace';
+import { Sheets } from './pages/payouts/Sheets';
+import { Sheet } from './pages/payouts/Sheet';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -106,6 +108,22 @@ export function App() {
           element={
             <RequireAdmin>
               <AccrualTrace />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/payouts/sheets"
+          element={
+            <RequireAdmin>
+              <Sheets />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/payouts/sheets/:id"
+          element={
+            <RequireAdmin>
+              <Sheet />
             </RequireAdmin>
           }
         />

@@ -44,6 +44,7 @@ const RELATED_KEYS: Record<string, string[]> = {
   'payout-anesthesia': ['payout-anesthesia'],
   'payout-norms': ['payout-norms'],
   'payout-schemes': ['payout-schemes'],
+  'payout-sheets': ['payout-sheets'],
 };
 
 // Универсальные мутации CRUD
