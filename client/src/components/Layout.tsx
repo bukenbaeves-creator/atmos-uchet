@@ -68,6 +68,7 @@ const ADMIN_SECTION: Section = {
   title: 'Администрирование',
   roles: ['admin'],
   items: [
+    { to: '/payouts', label: 'Выплаты · дашборд', icon: '📊', end: true },
     { to: '/payouts/settings', label: 'Выплаты · настройки', icon: '💸' },
     { to: '/payouts/sheets', label: 'Выплаты · ведомости', icon: '📄' },
     { to: '/payouts/trace', label: 'Выплаты · как посчитано', icon: '🧮' },

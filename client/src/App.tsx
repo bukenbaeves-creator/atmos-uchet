@@ -27,6 +27,7 @@ import { AccrualTrace } from './pages/payouts/AccrualTrace';
 import { Sheets } from './pages/payouts/Sheets';
 import { Sheet } from './pages/payouts/Sheet';
 import { Registry } from './pages/payouts/Registry';
+import { PayoutDashboard } from './pages/payouts/PayoutDashboard';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -96,6 +97,14 @@ export function App() {
         <Route path="/kpi" element={<RequireRole roles={SALES}><Kpi /></RequireRole>} />
         <Route path="/dictionaries" element={<RequireRole roles={SALES}><Dictionaries /></RequireRole>} />
         <Route path="/errors" element={<RequireRole roles={SALES}><ErrorCheck /></RequireRole>} />
+        <Route
+          path="/payouts"
+          element={
+            <RequireAdmin>
+              <PayoutDashboard />
+            </RequireAdmin>
+          }
+        />
         <Route
           path="/payouts/settings"
           element={
