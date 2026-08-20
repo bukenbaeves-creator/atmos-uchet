@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { PayeeKind } from '@prisma/client';
 import { makeCrudRouter } from '../crud.js';
 import { prisma } from '../lib/prisma.js';
-import { ApiError, asyncHandler, notFound, forbidden } from '../lib/http.js';
+import type { PrismaClientOrTx } from '../lib/prisma.js';
+import { ApiError, asyncHandler, notFound, forbidden, badRequest } from '../lib/http.js';
 import { serialize } from '../lib/serialize.js';
 import { writeAudit } from '../services/audit.service.js';
 import { assertDictionaryValue } from '../services/dictionary.service.js';
@@ -10,6 +12,72 @@ import { resolvePatient } from '../services/patient-resolve.service.js';
 import { patientInputSchema, requiredDate, requiredString, optionalString, moneyAmount } from '../schemas.js';
 import { patientSearchOR } from '../lib/search.js';
 import { dateRange, eqStr } from '../lib/filters.js';
+
+// Один участник операции (Э1-3). Используется и в схеме операции, и в хуках синхронизации.
+const participantSchema = z.object({
+  payeeId: z.coerce.number().int().positive(),
+  role: z.nativeEnum(PayeeKind),
+  sharePct: z.coerce.number().min(0).max(100).optional().nullable(),
+  anesthesiaType: optionalString(100),
+  shiftDay: z.coerce.boolean().default(false),
+  shiftNight: z.coerce.boolean().default(false),
+});
+type ParticipantInput = z.infer<typeof participantSchema>;
+
+// Синхронизация участников операции с БД (Э1-3). Вызывается из afterCreate/afterUpdate
+// в той же транзакции. Источник правды строковых полей — Operation.surgeon (из формы),
+// участники лишь дополняют. Проверки:
+//  • несколько хирургов → сумма sharePct = 100;
+//  • у хирурга dictionaryLabel задана и ≠ Operation.surgeon → отклонить (два источника правды);
+//  • dictionaryLabel пустая → сохранить (позже операция попадёт в «Сигналы» дашборда).
+async function syncParticipants(
+  tx: PrismaClientOrTx,
+  operationId: number,
+  surgeon: string | null,
+  participants: ParticipantInput[],
+  userId: number,
+) {
+  const surgeons = participants.filter((p) => p.role === 'surgeon');
+  if (surgeons.length > 1) {
+    const sum = surgeons.reduce((s, p) => s + (p.sharePct ?? 0), 0);
+    if (Math.abs(sum - 100) > 0.01) {
+      throw badRequest(`Если хирургов несколько, сумма их долей должна быть 100%. Сейчас ${sum}%.`);
+    }
+  }
+  if (surgeons.length) {
+    const payees = await tx.doctorPayee.findMany({
+      where: { id: { in: surgeons.map((s) => s.payeeId) } },
+      select: { id: true, fio: true, dictionaryLabel: true },
+    });
+    for (const s of surgeons) {
+      const payee = payees.find((p) => p.id === s.payeeId);
+      if (!payee) throw badRequest('Указан несуществующий получатель-хирург.');
+      const label = payee.dictionaryLabel?.trim();
+      if (label && surgeon && label !== surgeon.trim()) {
+        throw badRequest(
+          `Хирург-участник «${payee.fio}» привязан к справочнику как «${payee.dictionaryLabel}», но в поле «Врач» указано «${surgeon}». Приведите их в соответствие.`,
+        );
+      }
+    }
+  }
+  // Полная замена набора участников операции (идемпотентно при повторном сохранении).
+  await tx.operationParticipant.deleteMany({ where: { operationId } });
+  if (participants.length) {
+    await tx.operationParticipant.createMany({
+      data: participants.map((p) => ({
+        operationId,
+        payeeId: p.payeeId,
+        role: p.role,
+        sharePct: p.sharePct ?? null,
+        anesthesiaType: p.anesthesiaType ?? null,
+        shiftDay: p.shiftDay,
+        shiftNight: p.shiftNight,
+        createdBy: userId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+}
 
 const schema = z.object({
   patient: patientInputSchema,
@@ -22,8 +90,13 @@ const schema = z.object({
   anesthesiologist: optionalString(200),
   cost: moneyAmount(),
   anesthesiaCost: moneyAmount().default(0),
+  implantsCost: moneyAmount().default(0),
+  assistantCost: moneyAmount().default(0),
   contractSigned: z.coerce.boolean().default(false),
   note: optionalString(),
+  // Участники операции (Э1-3). Хирург создаётся тем же контролом формы, что и поле
+  // surgeon (единый источник правды — см. проверку согласованности ниже).
+  participants: z.array(participantSchema).optional(),
   // Разрешить создать операцию, даже если у пациента уже есть такая же на эту дату
   // (галочка в форме). Не пишется в БД — только гейт для проверки на дубль.
   confirmDuplicate: z.coerce.boolean().optional(),
@@ -58,6 +131,7 @@ const router = makeCrudRouter({
     patient: true,
     consultation: true,
     payments: { where: { deletedAt: null } },
+    participants: { include: { payee: { select: { id: true, fio: true, dictionaryLabel: true, kind: true } } } },
   },
   orderBy: { dateOp: 'desc' },
   buildWhere: (q) => {
@@ -82,7 +156,11 @@ const router = makeCrudRouter({
   },
   transform: (row) => ({ ...row, ...computeOperation(row as unknown as Parameters<typeof computeOperation>[0]) }),
   prepareData: async (data, req, ctx) => {
-    const { patient, confirmDuplicate, ...rest } = data as Record<string, unknown> & { patient: never };
+    // participants — связь, а не скалярное поле операции: убираем из данных записи,
+    // сохраняем отдельно в afterCreate/afterUpdate (та же транзакция).
+    const { patient, confirmDuplicate, participants: _participants, ...rest } = data as Record<string, unknown> & {
+      patient: never;
+    };
     const patientId = await resolvePatient(patient, req, ctx.tx);
     // Дату операции обычным PUT НЕ меняем — только через /reschedule (с причиной, для следа).
     if (ctx.mode === 'update') delete (rest as Record<string, unknown>).dateOp;
@@ -102,6 +180,18 @@ const router = makeCrudRouter({
       }
     }
     return { ...rest, patientId };
+  },
+  // Участников синхронизируем в той же транзакции. Если поле participants в запросе
+  // отсутствует (старый клиент) — набор участников не трогаем.
+  afterCreate: async (created, req, tx) => {
+    if (req.body?.participants === undefined) return;
+    const parts = z.array(participantSchema).parse(req.body.participants ?? []);
+    await syncParticipants(tx, created.id as number, created.surgeon as string | null, parts, req.user!.id);
+  },
+  afterUpdate: async (updated, _before, req, tx) => {
+    if (req.body?.participants === undefined) return;
+    const parts = z.array(participantSchema).parse(req.body.participants ?? []);
+    await syncParticipants(tx, updated.id as number, updated.surgeon as string | null, parts, req.user!.id);
   },
 });
 

@@ -35,6 +35,12 @@ interface Props<T extends JournalRecord> {
   rowClassName?: (row: T) => string;
   // Ненавязчивое уведомление над таблицей (получает загруженные строки)
   notice?: (rows: T[]) => ReactNode;
+  // Проброс в EntityForm для сущностей со связями (напр. участники операции):
+  // начальные служебные значения формы (зависят от редактируемой строки),
+  // доп. секция под полями и преобразование payload перед отправкой.
+  formExtraInitial?: (editing: T | null) => Record<string, unknown>;
+  renderFormExtra?: (values: Record<string, unknown>, set: (name: string, value: unknown) => void) => ReactNode;
+  transformPayload?: (payload: Record<string, unknown>, values: Record<string, unknown>) => Record<string, unknown>;
 }
 
 export function canEditRow(row: JournalRecord, user: { id: number; role: string } | null): boolean {
@@ -60,6 +66,9 @@ export function JournalPage<T extends JournalRecord>({
   headerActions,
   rowClassName,
   notice,
+  formExtraInitial,
+  renderFormExtra,
+  transformPayload,
 }: Props<T>) {
   const { user, isAdmin } = useAuth();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, search: '' });
@@ -167,6 +176,9 @@ export function JournalPage<T extends JournalRecord>({
         <EntityForm
           fields={fields}
           initial={editing ?? undefined}
+          extraInitial={formExtraInitial ? formExtraInitial(editing ?? null) : undefined}
+          renderExtra={renderFormExtra}
+          transformPayload={transformPayload}
           onSubmit={(payload) =>
             editing ? update.mutateAsync({ id: editing.id, data: payload }) : create.mutateAsync(payload)
           }

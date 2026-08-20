@@ -19,12 +19,24 @@ interface RescheduleRow {
   createdAt: string;
 }
 
+interface Participant {
+  id: number;
+  payeeId: number;
+  role: 'surgeon' | 'anesthesiologist' | 'assistant' | 'resident';
+  sharePct: number | null;
+  anesthesiaType: string | null;
+  shiftDay: boolean;
+  shiftNight: boolean;
+  payee?: { id: number; fio: string; dictionaryLabel: string | null; kind: string };
+}
+
 interface Operation {
   id: number;
   patient?: { fio: string };
   dateOp: string | null;
   opType: string | null;
   surgeon: string | null;
+  anesthesiologist?: string | null;
   manager: string | null;
   cost: number;
   totalDue: number;
@@ -32,8 +44,17 @@ interface Operation {
   balance: number;
   fullyPaid: boolean;
   contractSigned: boolean;
+  participants?: Participant[];
   createdBy?: number | null;
   createdAt?: string;
+}
+
+interface Payee {
+  id: number;
+  fio: string;
+  dictionaryLabel: string | null;
+  kind: string;
+  active: boolean;
 }
 
 const fields: Field[] = [
@@ -47,6 +68,8 @@ const fields: Field[] = [
   { name: 'anesthesiologist', label: 'Анестезиолог', type: 'text' },
   { name: 'cost', label: 'Стоимость операции', type: 'money', required: true },
   { name: 'anesthesiaCost', label: 'Стоимость наркоза', type: 'money' },
+  { name: 'implantsCost', label: 'Импланты, ₸', type: 'money' },
+  { name: 'assistantCost', label: 'Оплата ассистенту/медсестре, ₸', type: 'money' },
   { name: 'zapis', label: 'Запись', type: 'select', dict: 'zapis', required: true },
   { name: 'contractSigned', label: 'Договор подписан', type: 'checkbox' },
   { name: 'confirmDuplicate', label: 'Разрешить дубль (такая операция уже есть)', type: 'checkbox' },
@@ -56,8 +79,114 @@ const fields: Field[] = [
 export function Operations() {
   const { data: dict } = useDictionaries();
   const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [rescheduleFor, setRescheduleFor] = useState<Operation | null>(null);
   const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
+
+  // Получатели выплат — для привязки участников. Доступны только администратору
+  // (эндпоинт /payouts/* закрыт для остальных ролей), поэтому запрос включаем по роли.
+  const { data: payeesData } = useQuery({
+    queryKey: ['payout-payees'],
+    queryFn: () => apiGet<{ items: Payee[] }>('/payouts/payees'),
+    enabled: isAdmin,
+  });
+  const payees = payeesData?.items ?? [];
+  const activePayees = payees.filter((p) => p.active);
+  const payeeByLabel = new Map<string, Payee>();
+  for (const p of payees) if (p.dictionaryLabel) payeeByLabel.set(p.dictionaryLabel.trim(), p);
+
+  // Начальные служебные значения формы из участников редактируемой операции.
+  const formExtraInitial = (editing: Operation | null): Record<string, unknown> => {
+    const parts = editing?.participants ?? [];
+    const asst = parts.find((p) => p.role === 'assistant');
+    const anes = parts.find((p) => p.role === 'anesthesiologist');
+    return {
+      _assistantPayeeId: asst ? String(asst.payeeId) : '',
+      _anesthesiaType: anes?.anesthesiaType ?? '',
+      _shiftDay: anes?.shiftDay ?? false,
+      _shiftNight: anes?.shiftNight ?? false,
+    };
+  };
+
+  // Блок «Участники». Хирург и анестезиолог берутся из полей «Врач»/«Анестезиолог»
+  // (единый контрол — не дублируем ввод). Здесь — статус привязки к получателю,
+  // ассистент, тип наркоза и дежурство.
+  const renderFormExtra = (values: Record<string, unknown>, set: (n: string, v: unknown) => void) => {
+    if (!isAdmin) return null; // привязка участников — только у администратора
+    const surgeonLabel = (values.surgeon as string) || '';
+    const anesLabel = (values.anesthesiologist as string) || '';
+    const surgeonPayee = surgeonLabel ? payeeByLabel.get(surgeonLabel.trim()) : undefined;
+    const anesPayee = anesLabel ? payeeByLabel.get(anesLabel.trim()) : undefined;
+    const status = (label: string, payee?: Payee) => {
+      if (!label) return null;
+      return payee ? (
+        <span className="text-xs text-emerald-600">✓ получатель: {payee.fio}</span>
+      ) : (
+        <span className="text-xs text-amber-600">⚠ нет получателя с меткой «{label}» — выплата не начислится (заведите врача в «Настройки выплат»)</span>
+      );
+    };
+    return (
+      <div className="rounded-lg border border-slate-200 p-3">
+        <div className="mb-2 text-sm font-semibold text-slate-700">Участники операции</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <div className="label">Хирург (из поля «Врач»)</div>
+            <div className="text-sm text-slate-600">{surgeonLabel || '—'}</div>
+            {status(surgeonLabel, surgeonPayee)}
+          </div>
+          <div>
+            <div className="label">Анестезиолог (из поля «Анестезиолог»)</div>
+            <div className="text-sm text-slate-600">{anesLabel || '—'}</div>
+            {status(anesLabel, anesPayee)}
+          </div>
+          <div>
+            <label className="label">Ассистент / медсестра</label>
+            <select className="input" value={(values._assistantPayeeId as string) ?? ''} onChange={(e) => set('_assistantPayeeId', e.target.value)}>
+              <option value="">— нет —</option>
+              {activePayees.map((p) => (
+                <option key={p.id} value={p.id}>{p.fio}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Тип наркоза</label>
+            <input className="input" value={(values._anesthesiaType as string) ?? ''} onChange={(e) => set('_anesthesiaType', e.target.value)} placeholder="общий / седация / …" />
+          </div>
+          <div className="sm:col-span-2 flex gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={Boolean(values._shiftDay)} onChange={(e) => set('_shiftDay', e.target.checked)} /> Дежурство день
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={Boolean(values._shiftNight)} onChange={(e) => set('_shiftNight', e.target.checked)} /> Дежурство ночь
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Сборка participants из строковых полей и служебных ключей. Отправляем только когда
+  // список получателей загружен — иначе рискуем стереть уже привязанных участников.
+  const transformPayload = (payload: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> => {
+    if (!isAdmin || !payeesData) return payload;
+    const parts: Record<string, unknown>[] = [];
+    const surgeon = (values.surgeon as string) || '';
+    const sp = surgeon ? payeeByLabel.get(surgeon.trim()) : undefined;
+    if (sp) parts.push({ payeeId: sp.id, role: 'surgeon' });
+    const anes = (values.anesthesiologist as string) || '';
+    const ap = anes ? payeeByLabel.get(anes.trim()) : undefined;
+    if (ap)
+      parts.push({
+        payeeId: ap.id,
+        role: 'anesthesiologist',
+        anesthesiaType: (values._anesthesiaType as string) || null,
+        shiftDay: Boolean(values._shiftDay),
+        shiftNight: Boolean(values._shiftNight),
+      });
+    const asstId = values._assistantPayeeId as string;
+    if (asstId) parts.push({ payeeId: Number(asstId), role: 'assistant' });
+    return { ...payload, participants: parts };
+  };
 
   const columns: Column<Operation>[] = [
     { header: 'Пациент', cell: (o) => <span className="font-medium">{o.patient?.fio ?? '—'}</span> },
@@ -97,6 +226,9 @@ export function Operations() {
         fields={fields}
         exportJournal="operations"
         newButtonLabel="Операцию"
+        formExtraInitial={formExtraInitial}
+        renderFormExtra={renderFormExtra}
+        transformPayload={transformPayload}
         rowEditable={operationEditable}
         rowActions={(o) =>
           operationEditable(o, user ?? null) ? (

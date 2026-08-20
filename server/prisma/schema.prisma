@@ -165,12 +165,15 @@ model Operation {
   anesthesiologist String?
   cost             Decimal       @default(0) @db.Decimal(14, 2)
   anesthesiaCost   Decimal       @default(0) @db.Decimal(14, 2)
+  implantsCost     Decimal       @default(0) @db.Decimal(14, 2) // стоимость имплантов (Э1-1)
+  assistantCost    Decimal       @default(0) @db.Decimal(14, 2) // оплата ассистенту/медсестре (Э1-1)
   contractSigned   Boolean       @default(false)
   note             String?
 
-  payments    Payment[]
-  writeoffs   ExpenseWriteoff[]
-  reschedules OperationReschedule[]
+  payments     Payment[]
+  writeoffs    ExpenseWriteoff[]
+  reschedules  OperationReschedule[]
+  participants OperationParticipant[] // участники операции (Э1-1)
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -562,7 +565,7 @@ model DoctorPayee {
   schemes      PayoutScheme[]
   // accruals     PayoutAccrual[]        // добавится в Э2-2
   // sheetLines   PayoutSheetLine[]      // добавится в Э3-1
-  // participants OperationParticipant[] // добавится в Э1-1
+  participants OperationParticipant[] // Э1-1
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -729,4 +732,27 @@ model MaterialNorm {
   createdAt DateTime @default(now())
 
   @@index([opType, validFrom])
+}
+
+/// Кто участвовал в операции и в какой роли. Не заменяет поля Operation.surgeon
+/// и Operation.anesthesiologist — они продолжают заполняться синхронно
+/// (их читают KPI, экспорт и фильтры). (Э1-1)
+model OperationParticipant {
+  id             Int         @id @default(autoincrement())
+  operation      Operation   @relation(fields: [operationId], references: [id])
+  operationId    Int
+  payee          DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId        Int
+  role           PayeeKind
+  sharePct       Decimal?    @db.Decimal(5, 2) // деление гонорара между двумя хирургами (сумма = 100)
+  anesthesiaType String? // общий | седация | седация-фейс — для тарифа анестезиолога
+  shiftDay       Boolean     @default(false) // дежурство день
+  shiftNight     Boolean     @default(false) // дежурство ночь
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@unique([operationId, payeeId, role])
+  @@index([operationId])
+  @@index([payeeId])
 }

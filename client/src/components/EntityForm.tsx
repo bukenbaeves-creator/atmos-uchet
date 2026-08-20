@@ -47,6 +47,16 @@ interface Props {
   submitLabel?: string;
   onSubmit: (data: Record<string, unknown>) => Promise<unknown>;
   onDone: () => void;
+  // Доп. значения формы вне декларативных полей (напр. выбор участников операции).
+  // Мержатся в начальное состояние; ключи-«служебные» не попадают в payload сами,
+  // их переносит transformPayload.
+  extraInitial?: Record<string, unknown>;
+  // Доп. секция под сеткой полей (напр. блок «Участники»). Получает текущие значения
+  // и сеттер — управляет служебными ключами формы.
+  renderExtra?: (values: Record<string, unknown>, set: (name: string, value: unknown) => void) => React.ReactNode;
+  // Преобразование payload перед отправкой (напр. собрать participants из служебных
+  // ключей и строковых полей). Возвращает финальный объект для onSubmit.
+  transformPayload?: (payload: Record<string, unknown>, values: Record<string, unknown>) => Record<string, unknown>;
 }
 
 function initialValue(field: Field, initial?: Record<string, unknown>) {
@@ -67,13 +77,14 @@ function initialValue(field: Field, initial?: Record<string, unknown>) {
   return raw;
 }
 
-export function EntityForm({ fields, initial, submitLabel = 'Сохранить', onSubmit, onDone }: Props) {
+export function EntityForm({ fields, initial, submitLabel = 'Сохранить', onSubmit, onDone, extraInitial, renderExtra, transformPayload }: Props) {
   const { data: dict } = useDictionaries();
   const editing = initial != null; // режим правки (для lockOnEdit)
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const init = initial as Record<string, unknown> | undefined;
     const v: Record<string, unknown> = {};
     for (const f of fields) v[f.name] = initialValue(f, init);
+    if (extraInitial) Object.assign(v, extraInitial);
     return v;
   });
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +127,8 @@ export function EntityForm({ fields, initial, submitLabel = 'Сохранить'
           v = null;
         payload[f.name] = v;
       }
-      await onSubmit(payload);
+      const finalPayload = transformPayload ? transformPayload(payload, values) : payload;
+      await onSubmit(finalPayload);
       onDone();
     } catch (err) {
       if (err instanceof ApiError) {
@@ -154,6 +166,8 @@ export function EntityForm({ fields, initial, submitLabel = 'Сохранить'
           </div>
         ))}
       </div>
+
+      {renderExtra && renderExtra(values, set)}
 
       {error && (
         <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
