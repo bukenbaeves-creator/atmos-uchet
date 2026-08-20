@@ -14,6 +14,7 @@ import {
   getSheet,
   setWithholdings,
   addLinePayment,
+  getSheetRegistry,
 } from '../../services/payout-sheet.service.js';
 
 // Ведомости выплат (Э3-2). Только администратор.
@@ -56,6 +57,16 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     res.json(serialize(await getSheet(Number(req.params.id))));
+  }),
+);
+
+// Реестр по врачу (Э4-2): динамические колонки по схеме врача.
+router.get(
+  '/:id/registry',
+  asyncHandler(async (req, res) => {
+    const payeeId = Number(req.query.payeeId);
+    if (!payeeId) throw badRequest('Не указан payeeId');
+    res.json(serialize(await getSheetRegistry(Number(req.params.id), payeeId)));
   }),
 );
 

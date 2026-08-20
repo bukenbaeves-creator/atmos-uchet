@@ -218,6 +218,53 @@ export async function addLinePayment(
   });
 }
 
+// Реестр по врачу (Э4-2): строки операций с развёрнутыми компонентами. Набор колонок
+// формируется по факту начислений (calcPayout включает только компоненты, активные в
+// схеме врача) — поэтому у Кулесбаева нет колонок «Импланты»/«Медсестра», но есть «Аренда
+// дня». Итог реестра сходится со строкой ведомости.
+export async function getSheetRegistry(sheetId: number, payeeId: number) {
+  const accruals = await prisma.payoutAccrual.findMany({
+    where: { sheetId, payeeId },
+    include: {
+      operation: { select: { id: true, dateOp: true, opType: true, patient: { select: { fio: true } } } },
+      payee: { select: { fio: true } },
+    },
+    orderBy: [{ eventDate: 'asc' }, { id: 'asc' }],
+  });
+
+  const stageRank = (s: string) => (s === 'before_share' ? 0 : 1);
+  const colMap = new Map<string, { code: string; label: string; stage: string; order: number }>();
+  let order = 0;
+  for (const a of accruals) {
+    for (const c of (a.components as Array<{ code: string; label: string; stage: string }>) ?? []) {
+      if (!colMap.has(c.code)) colMap.set(c.code, { code: c.code, label: c.label, stage: c.stage, order: order++ });
+    }
+  }
+  const columns = [...colMap.values()].sort((a, b) => stageRank(a.stage) - stageRank(b.stage) || a.order - b.order);
+
+  const rows = accruals.map((a) => {
+    const cmap: Record<string, number> = {};
+    for (const c of (a.components as Array<{ code: string; amount: number }>) ?? []) cmap[c.code] = Number(c.amount);
+    return {
+      accrualId: a.id,
+      operationId: a.operationId,
+      dateOp: a.operation?.dateOp ?? null,
+      opType: a.operation?.opType ?? null,
+      patient: a.operation?.patient?.fio ?? null,
+      base: Number(a.base),
+      sharePct: Number(a.sharePct),
+      isCorrection: a.isCorrection,
+      components: cmap,
+      amount: Number(a.amount),
+    };
+  });
+
+  const totals: { amount: number; perComponent: Record<string, number> } = { amount: round2(rows.reduce((s, r) => s + r.amount, 0)), perComponent: {} };
+  for (const col of columns) totals.perComponent[col.code] = round2(rows.reduce((s, r) => s + (r.components[col.code] ?? 0), 0));
+
+  return { payeeId, payeeFio: accruals[0]?.payee?.fio ?? null, columns, rows, totals };
+}
+
 export async function listSheets() {
   return prisma.payoutSheet.findMany({ include: { lines: true }, orderBy: { createdAt: 'desc' } });
 }
