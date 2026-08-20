@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiPatch, payoutSheetExportUrl, ApiError } from '../../api/client';
+import { apiGet, apiPost, apiPatch, payoutSheetExportUrl, payoutActUrl, ApiError } from '../../api/client';
 import { PageHeader, Spinner, EmptyState, Badge, Modal } from '../../components/ui';
 import { ExportButton } from '../../components/ExportButton';
 
@@ -169,6 +169,7 @@ export function Sheet() {
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1">
                         <button className="btn-ghost px-2 py-1 text-xs" onClick={() => nav(`/payouts/sheets/${sheetId}/registry/${l.payeeId}`)}>Реестр</button>
+                        <button className="btn-ghost px-2 py-1 text-xs" onClick={() => window.open(payoutActUrl(sheetId, l.id), '_blank')}>Акт</button>
                         {s.status === 'approved' && (
                           <>
                             <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setWithhLine(l)}>Удержания</button>

@@ -63,6 +63,7 @@ export async function downloadFile(url: string, filename: string): Promise<void>
 
 export const exportUrl = (journal: string) => `${BASE}/api/export/${journal}.xlsx`;
 export const payoutSheetExportUrl = (id: number) => `${BASE}/api/payouts/sheets/${id}/export`;
+export const payoutActUrl = (id: number, lineId: number) => `${BASE}/api/payouts/sheets/${id}/lines/${lineId}/act`;
 // Выгрузки модуля расходов (stock | purchase-list | expiry | writeoffs)
 export const expenseExportUrl = (report: string) => `${BASE}/api/expense-export/${report}.xlsx`;
 // Шаблон для импорта прихода
