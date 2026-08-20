@@ -128,7 +128,8 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
     for (const e of existing) if (e.triggerPaymentId != null) byTrigger.set(e.triggerPaymentId, e);
 
     let cumulativePaid = 0;
-    let priorCumulative = 0; // накопленная сумма начислений по обработанным событиям
+    let priorCumulative = 0; // целевая накопленная сумма (по расчёту, независимо от блокировок)
+    let lastSharePct = 0;
     const seenPaymentIds = new Set<number>();
 
     for (let i = 0; i < payments.length; i++) {
@@ -150,6 +151,7 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
       const targetCumulative = round2(calc.amountFull * ratio);
       const delta = round2(targetCumulative - priorCumulative);
       priorCumulative = targetCumulative;
+      lastSharePct = calc.sharePct;
 
       const data = {
         schemeId: scheme.id,
@@ -175,12 +177,39 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
       }
     }
 
-    // Осиротевшие свободные начисления (платёж удалён) — убрать. Заблокированные при
-    // уменьшении итога компенсируются корректировкой (реализуется на этапе ведомостей).
+    // Осиротевшие свободные начисления (платёж удалён) — убрать (только free).
     for (const e of existing) {
       if (e.triggerPaymentId != null && !seenPaymentIds.has(e.triggerPaymentId) && e.status === 'free') {
         await tx.payoutAccrual.delete({ where: { id: e.id } });
       }
+    }
+
+    // Корректировка (Э3-2, тест Т14): если из-за возврата/правки целевой итог не сходится
+    // с суммой уже существующих начислений (в т.ч. заблокированных в ведомости), заводим
+    // одно свободное авто-начисление-корректировку на разницу (eventDate = сегодня).
+    const after = await tx.payoutAccrual.findMany({ where: { operationId: op.id, payeeId: part.payeeId } });
+    const autoCorr = after.find((a) => a.isCorrection && a.triggerPaymentId === null && a.status === 'free');
+    const sumExcl = after.filter((a) => a.id !== autoCorr?.id).reduce((s, a) => s + Number(a.amount), 0);
+    const need = round2(priorCumulative - sumExcl);
+    if (Math.abs(need) >= 0.005) {
+      const corrData = {
+        schemeId: scheme.id,
+        schemeVersion: scheme.version,
+        triggerPaymentId: null,
+        eventDate: new Date(),
+        isCorrection: true,
+        base,
+        paidRatio: base > 0 ? Math.min(1, cumulativePaid / base) : 0,
+        sharePct: lastSharePct,
+        components: [] as unknown as object,
+        amountFull: priorCumulative,
+        amount: need,
+        calcTrace: [{ label: 'Корректировка по итогу пересчёта', value: need }] as unknown as object,
+      };
+      if (autoCorr) await tx.payoutAccrual.update({ where: { id: autoCorr.id }, data: corrData });
+      else await tx.payoutAccrual.create({ data: { ...corrData, payeeId: part.payeeId, operationId: op.id } });
+    } else if (autoCorr) {
+      await tx.payoutAccrual.delete({ where: { id: autoCorr.id } });
     }
    } catch {
      // Ошибка расчёта по участнику (нет доли для источника, нет ставки эквайринга,

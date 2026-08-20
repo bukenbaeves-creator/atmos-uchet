@@ -565,7 +565,7 @@ model DoctorPayee {
 
   schemes      PayoutScheme[]
   accruals     PayoutAccrual[] // Э2-2
-  // sheetLines   PayoutSheetLine[]      // добавится в Э3-1
+  sheetLines   PayoutSheetLine[] // Э3-1
   participants OperationParticipant[] // Э1-1
 
   createdBy Int?
@@ -783,7 +783,7 @@ model PayoutAccrual {
   calcTrace  Json // пошаговый расчёт для экрана «Как посчитано»
 
   status  AccrualStatus @default(free)
-  // sheet   PayoutSheet?  @relation(fields: [sheetId], references: [id]) // связь добавится в Э3-1
+  sheet   PayoutSheet? @relation(fields: [sheetId], references: [id]) // Э3-1
   sheetId Int? // заполняется при утверждении ведомости
 
   createdAt DateTime @default(now())
@@ -793,4 +793,67 @@ model PayoutAccrual {
   @@index([operationId])
   @@index([sheetId])
   @@index([status, eventDate])
+}
+
+/// Ведомость выплат — набор начислений, сгруппированных по врачам за период. (Э3-1)
+model PayoutSheet {
+  id         Int         @id @default(autoincrement())
+  number     String      @unique // ВВ-2026-08-003
+  kind       SheetKind
+  periodFrom DateTime? // null для adhoc
+  periodTo   DateTime?
+  status     SheetStatus @default(draft)
+  snapshot   Json? // полный снимок расчёта на момент утверждения
+  note       String?
+
+  lines    PayoutSheetLine[]
+  accruals PayoutAccrual[]
+
+  approvedBy Int?
+  approvedAt DateTime?
+  paidAt     DateTime?
+  createdBy  Int?
+  createdAt  DateTime  @default(now())
+  updatedBy  Int?
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status, periodFrom])
+}
+
+/// Строка ведомости — итог по одному врачу.
+model PayoutSheetLine {
+  id      Int         @id @default(autoincrement())
+  sheet   PayoutSheet @relation(fields: [sheetId], references: [id])
+  sheetId Int
+  payee   DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId Int
+
+  operationsCount Int     @default(0)
+  accruedTotal    Decimal @db.Decimal(14, 2) // сумма начислений, включая корректировки
+  withholdings    Json // [{type, amount, comment}] — ручной ввод бухгалтера
+  toPay           Decimal @db.Decimal(14, 2)
+  paidTotal       Decimal @default(0) @db.Decimal(14, 2)
+  actNumber       String?
+  actSigned       Boolean @default(false)
+
+  payments PayoutPayment[]
+
+  @@unique([sheetId, payeeId])
+  @@index([payeeId])
+}
+
+/// Факт выплаты. Может быть несколько частями и разными каналами.
+model PayoutPayment {
+  id      Int             @id @default(autoincrement())
+  line    PayoutSheetLine @relation(fields: [lineId], references: [id])
+  lineId  Int
+  date    DateTime
+  amount  Decimal         @db.Decimal(14, 2)
+  channel String // «на расчётный счёт» | «наличные» | «перевод Kaspi»
+  note    String?
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([lineId])
 }

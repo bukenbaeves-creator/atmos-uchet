@@ -1,0 +1,84 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { asyncHandler, badRequest } from '../../lib/http.js';
+import { requireAuth } from '../../middleware/auth.js';
+import { requireAdmin } from '../../middleware/rbac.js';
+import { serialize } from '../../lib/serialize.js';
+import {
+  previewSheet,
+  createSheet,
+  excludeAccruals,
+  approveSheet,
+  dissolveSheet,
+  listSheets,
+  getSheet,
+} from '../../services/payout-sheet.service.js';
+
+// Ведомости выплат (Э3-2). Только администратор.
+const router = Router();
+router.use(requireAuth, requireAdmin);
+
+const filterSchema = z.object({
+  kind: z.enum(['weekly', 'monthly', 'custom', 'adhoc']),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  payeeIds: z.array(z.coerce.number().int().positive()).optional(),
+  accrualIds: z.array(z.coerce.number().int().positive()).optional(),
+});
+
+router.post(
+  '/preview',
+  asyncHandler(async (req, res) => {
+    const f = filterSchema.parse(req.body);
+    res.json(serialize(await previewSheet(f)));
+  }),
+);
+
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    const body = filterSchema.extend({ note: z.string().trim().max(1000).optional().nullable() }).parse(req.body);
+    const sheet = await createSheet(body, body.note ?? null, req);
+    res.status(201).json(serialize(sheet));
+  }),
+);
+
+router.get(
+  '/',
+  asyncHandler(async (_req, res) => {
+    res.json({ items: serialize(await listSheets()) });
+  }),
+);
+
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await getSheet(Number(req.params.id))));
+  }),
+);
+
+router.patch(
+  '/:id/exclude',
+  asyncHandler(async (req, res) => {
+    const { accrualIds } = z.object({ accrualIds: z.array(z.coerce.number().int().positive()).min(1) }).parse(req.body);
+    res.json(serialize(await excludeAccruals(Number(req.params.id), accrualIds, req)));
+  }),
+);
+
+router.post(
+  '/:id/approve',
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await approveSheet(Number(req.params.id), req)));
+  }),
+);
+
+router.post(
+  '/:id/dissolve',
+  asyncHandler(async (req, res) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1, 'Укажите причину роспуска').max(500) }).parse(req.body);
+    if (!reason) throw badRequest('Укажите причину роспуска');
+    res.json(await dissolveSheet(Number(req.params.id), reason, req));
+  }),
+);
+
+export default router;

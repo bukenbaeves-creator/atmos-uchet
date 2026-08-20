@@ -35,6 +35,7 @@ import payoutComponentsRouter from './routes/payouts/components.js';
 import payoutRatesRouter from './routes/payouts/rates.js';
 import payoutSchemesRouter from './routes/payouts/schemes.js';
 import payoutCalcRouter from './routes/payouts/calc.js';
+import payoutSheetsRouter from './routes/payouts/sheets.js';
 
 const app = express();
 
@@ -110,6 +111,7 @@ app.use('/api/backup', backupRouter);
 app.use('/api/payouts/payees', payoutPayeesRouter);
 app.use('/api/payouts/components', payoutComponentsRouter);
 app.use('/api/payouts/schemes', payoutSchemesRouter);
+app.use('/api/payouts/sheets', payoutSheetsRouter);
 app.use('/api/payouts', payoutCalcRouter); // /recalculate, /schemes/preview
 app.use('/api/payouts', payoutRatesRouter); // /rates/acquiring, /tariffs/anesthesia, /norms
 
