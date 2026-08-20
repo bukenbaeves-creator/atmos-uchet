@@ -98,6 +98,8 @@ async function syncTariffAccrual(
 export interface RecalcContext {
   acquiringRates?: AcquiringRateInput[];
   componentsById?: Map<number, ComponentRow>;
+  payeesByLabel?: Map<string, number>; // dictionaryLabel → payeeId (для вывода из Operation.surgeon)
+  errors?: { operationId: number; message: string }[]; // причины пропуска расчёта (для сводки пересчёта)
 }
 
 // Пересчёт всех начислений по операции. Вызывать в той же транзакции, что и триггер.
@@ -110,13 +112,37 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
       writeoffs: { where: { deletedAt: null } },
     },
   });
-  // Операция удалена/не найдена или без участников → снять свободные начисления
-  // (заблокированные/оплаченные не трогаем — неизменность ведомости). Быстрый путь.
-  if (!op || op.participants.length === 0) {
+  if (!op) {
     await tx.payoutAccrual.deleteMany({ where: { operationId, status: 'free' } });
     return;
   }
   if (!op.dateOp) return;
+
+  // Эффективные участники = явные OperationParticipant + выведенные из строковых полей
+  // операции (Operation.surgeon / anesthesiologist) по метке справочника получателя.
+  // Это позволяет считать выплаты по УЖЕ имеющимся операциям без ручного ввода участников.
+  type Eff = { payeeId: number; anesthesiaType: string | null; role: string };
+  const effective: Eff[] = op.participants.map((p) => ({ payeeId: p.payeeId, anesthesiaType: p.anesthesiaType, role: p.role }));
+  const payeeByLabel = async (label: string | null): Promise<number | null> => {
+    const key = label?.trim();
+    if (!key) return null;
+    if (ctx?.payeesByLabel) return ctx.payeesByLabel.get(key) ?? null;
+    const p = await tx.doctorPayee.findFirst({ where: { dictionaryLabel: key, deletedAt: null, active: true }, select: { id: true } });
+    return p?.id ?? null;
+  };
+  if (!effective.some((e) => e.role === 'surgeon')) {
+    const pid = await payeeByLabel(op.surgeon);
+    if (pid) effective.push({ payeeId: pid, anesthesiaType: null, role: 'surgeon' });
+  }
+  if (!effective.some((e) => e.role === 'anesthesiologist')) {
+    const pid = await payeeByLabel(op.anesthesiologist);
+    if (pid) effective.push({ payeeId: pid, anesthesiaType: null, role: 'anesthesiologist' });
+  }
+  // Нет ни одного получателя → снять свободные начисления и выйти (заблокированные не трогаем).
+  if (effective.length === 0) {
+    await tx.payoutAccrual.deleteMany({ where: { operationId, status: 'free' } });
+    return;
+  }
 
   const acquiringRates: AcquiringRateInput[] =
     ctx?.acquiringRates ??
@@ -160,7 +186,7 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
 
   // Обрабатываем участников со схемой типа share_based. Анестезиолог (тариф) считается
   // на уровне ведомости целиком за период — здесь пропускаем.
-  for (const part of op.participants) {
+  for (const part of effective) {
    try {
     const scheme = await getSchemeForDate(part.payeeId, op.dateOp, tx);
     if (!scheme) continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
@@ -265,10 +291,11 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
     } else if (autoCorr) {
       await tx.payoutAccrual.delete({ where: { id: autoCorr.id } });
     }
-   } catch {
+   } catch (e) {
      // Ошибка расчёта по участнику (нет доли для источника, нет ставки эквайринга,
-     // кривая схема) НЕ должна ломать кассу/операции. Начисления по этому участнику
-     // не создаём — операция становится кандидатом в «Сигналы» дашборда.
+     // кривая схема) НЕ должна ломать кассу/операции. Причину собираем для сводки
+     // массового пересчёта, чтобы пользователь понял, почему начислений нет.
+     ctx?.errors?.push({ operationId: op.id, message: e instanceof Error ? e.message : 'ошибка расчёта' });
      continue;
    }
   }
@@ -284,5 +311,9 @@ export async function loadRecalcContext(tx: PrismaClientOrTx): Promise<RecalcCon
   const componentsById = new Map<number, ComponentRow>(
     (await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]),
   );
-  return { acquiringRates, componentsById };
+  const payeesByLabel = new Map<string, number>();
+  for (const p of await tx.doctorPayee.findMany({ where: { deletedAt: null, active: true, dictionaryLabel: { not: null } }, select: { id: true, dictionaryLabel: true } })) {
+    if (p.dictionaryLabel) payeesByLabel.set(p.dictionaryLabel.trim(), p.id);
+  }
+  return { acquiringRates, componentsById, payeesByLabel };
 }

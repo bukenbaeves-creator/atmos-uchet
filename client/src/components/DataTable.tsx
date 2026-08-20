@@ -31,6 +31,7 @@ export interface DataTableProps<T> {
   rows: T[];
   totals?: Record<string, number | string | null>;
   rowAccent?: (row: T) => string | undefined; // цвет полосы слева
+  onRowClick?: (row: T) => void;
   empty?: string;
   searchable?: boolean;
 }
@@ -45,7 +46,7 @@ function fmt(v: number | string | null | undefined, format?: string): { text: st
   return { text: v == null || v === '' ? '—' : String(v), cls: '' };
 }
 
-export function DataTable<T>({ columns, rows, totals, rowAccent, empty = 'Нет данных', searchable = true }: DataTableProps<T>) {
+export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, empty = 'Нет данных', searchable = true }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [dense, setDense] = useState(false);
@@ -148,7 +149,11 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, empty = 'Нет
               table.getRowModel().rows.map((row) => {
                 const accent = rowAccent?.(row.original);
                 return (
-                  <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50">
+                  <tr
+                    key={row.id}
+                    className={`border-b border-slate-50 hover:bg-slate-50 ${onRowClick ? 'cursor-pointer' : ''}`}
+                    onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  >
                     {row.getVisibleCells().map((cell, ci) => {
                       const m = cell.column.columnDef.meta as DataTableColumn<T>;
                       const { text, cls } = fmt(cell.getValue() as number | string | null, m.format);

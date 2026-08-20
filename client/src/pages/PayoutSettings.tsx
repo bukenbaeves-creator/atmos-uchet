@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { PageHeader, Spinner, EmptyState, Modal, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
+import { useDictionaries } from '../lib/dictionaries';
 
 // Экран «Настройки выплат» — конструктор модуля выплат врачам (только администратор).
 // Шесть вкладок: получатели, компоненты расчёта, ставки эквайринга, тарифы анестезии,
@@ -33,6 +34,21 @@ const SHARE_MODE_LABEL: Record<string, string> = { constant: 'постоянна
 
 const fmtDate = (iso: string | null) => (iso ? iso.slice(0, 10).split('-').reverse().join('.') : '—');
 const fmtMoney = (v: number | string | null) => (v == null ? '—' : Number(v).toLocaleString('ru-RU'));
+
+// Выпадающий список из существующего справочника (doctor/terminal/op_type/zapis) —
+// чтобы не вводить значения вручную и не было расхождений с данными операций.
+function DictSelect({ category, value, onChange, placeholder = '— выберите —', required }: { category: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean }) {
+  const { data } = useDictionaries();
+  const options = data?.[category] ?? [];
+  return (
+    <select className="input" value={value} onChange={(e) => onChange(e.target.value)} required={required}>
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o.id} value={o.label}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
 
 export function PayoutSettings() {
   const [tab, setTab] = useState<TabKey>('payees');
@@ -120,7 +136,10 @@ function PayeesTab() {
               </select>
             </div>
           </div>
-          <div><label className="label">Метка справочника (значение из поля «Хирург» операции)</label><input className="input" value={form.dictionaryLabel} onChange={(e) => setForm({ ...form, dictionaryLabel: e.target.value })} placeholder="напр. Кулесбаев" /></div>
+          <div><label className="label">Врач из справочника (значение поля «Врач» в операциях)</label>
+            <DictSelect category="doctor" value={form.dictionaryLabel} onChange={(v) => setForm({ ...form, dictionaryLabel: v, fio: form.fio || v })} placeholder="— выберите врача —" />
+            <p className="mt-1 text-xs text-slate-400">По этому значению начисления привяжутся к операциям автоматически.</p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="label">ИИН</label><input className="input" value={form.iin} onChange={(e) => setForm({ ...form, iin: e.target.value })} /></div>
             <div><label className="label">Счёт</label><input className="input" value={form.bankAccount} onChange={(e) => setForm({ ...form, bankAccount: e.target.value })} /></div>
@@ -187,7 +206,7 @@ function AcquiringTab() {
       </TabShell>
       <Modal open={open} onClose={() => setOpen(false)} title="Новая ставка эквайринга">
         <form onSubmit={submit} className="space-y-3">
-          <div><label className="label">Терминал</label><input className="input" value={form.terminal} onChange={(e) => setForm({ ...form, terminal: e.target.value })} required /></div>
+          <div><label className="label">Терминал</label><DictSelect category="terminal" value={form.terminal} onChange={(v) => setForm({ ...form, terminal: v })} required /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="label">Ставка, %</label><input type="number" step="any" min={0} max={100} className="input" value={form.ratePct} onChange={(e) => setForm({ ...form, ratePct: e.target.value })} required /></div>
             <div><label className="label">Действует с</label><input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required /></div>
@@ -279,7 +298,7 @@ function NormsTab() {
       </TabShell>
       <Modal open={open} onClose={() => setOpen(false)} title="Новый норматив материалов">
         <form onSubmit={submit} className="space-y-3">
-          <div><label className="label">Вид операции</label><input className="input" value={form.opType} onChange={(e) => setForm({ ...form, opType: e.target.value })} required /></div>
+          <div><label className="label">Вид операции</label><DictSelect category="op_type" value={form.opType} onChange={(v) => setForm({ ...form, opType: v })} required /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="label">Норматив, сумма</label><input type="number" step="any" min={0} className="input" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></div>
             <div><label className="label">Действует с</label><input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required /></div>
@@ -375,7 +394,7 @@ function SchemesTab() {
               <div className="space-y-2">
                 {shareRows.map((r, i) => (
                   <div key={i} className="flex gap-2">
-                    <input className="input flex-1" placeholder="ключ (напр. cash / transfer)" value={r.key} onChange={(e) => setShareRows(shareRows.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} />
+                    <div className="flex-1"><DictSelect category="zapis" value={r.key} onChange={(v) => setShareRows(shareRows.map((x, j) => (j === i ? { ...x, key: v } : x)))} placeholder="— источник записи —" /></div>
                     <input type="number" step="any" min={0} max={1} className="input w-32" placeholder="доля 0…1" value={r.share} onChange={(e) => setShareRows(shareRows.map((x, j) => (j === i ? { ...x, share: e.target.value } : x)))} />
                     <button type="button" className="btn-ghost px-2" onClick={() => setShareRows(shareRows.filter((_, j) => j !== i))}>✕</button>
                   </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from '../../api/client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiGet, apiPost, ApiError } from '../../api/client';
 import { PageHeader, Spinner, EmptyState, Badge } from '../../components/ui';
 import { SheetWizard } from './SheetWizard';
 
@@ -27,20 +27,51 @@ const fmtDate = (iso: string | null) => (iso ? iso.slice(0, 10).split('-').rever
 
 export function Sheets() {
   const nav = useNavigate();
+  const qc = useQueryClient();
   const [wizard, setWizard] = useState(false);
+  const [recalcBusy, setRecalcBusy] = useState(false);
+  const [recalcMsg, setRecalcMsg] = useState<string | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ['payout-sheets'],
     queryFn: () => apiGet<{ items: Sheet[] }>('/payouts/sheets'),
   });
   const items = data?.items ?? [];
 
+  // Пересчёт начислений по всем операциям (после настройки получателей и схем).
+  // Генерирует начисления, которые попадут в ведомость.
+  const recalc = async () => {
+    setRecalcBusy(true);
+    setRecalcMsg(null);
+    try {
+      const r = await apiPost<{ processed: number; accruals: number; errors: { message: string; count: number }[] }>('/payouts/recalculate', {});
+      let msg = `Готово: обработано операций ${r.processed}, начислений ${r.accruals}.`;
+      if (r.errors?.length) msg += ' Не посчитано — ' + r.errors.map((e) => `${e.message} (${e.count})`).join('; ');
+      else msg += ' Теперь можно собрать ведомость.';
+      setRecalcMsg(msg);
+      qc.invalidateQueries({ queryKey: ['payout-sheets'] });
+    } catch (x) {
+      setRecalcMsg(x instanceof ApiError ? x.message : 'Не удалось пересчитать');
+    } finally {
+      setRecalcBusy(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Ведомости выплат"
         subtitle="Сбор начислений по врачам за период, утверждение, удержания и выплаты."
-        actions={<button className="btn-primary" onClick={() => setWizard(true)}>+ Ведомость</button>}
+        actions={
+          <div className="flex gap-2">
+            <button className="btn-ghost" disabled={recalcBusy} onClick={recalc} title="Пересчитать начисления по всем операциям на основе получателей и схем">
+              {recalcBusy ? 'Пересчёт…' : '↻ Пересчитать выплаты'}
+            </button>
+            <button className="btn-primary" onClick={() => setWizard(true)}>+ Ведомость</button>
+          </div>
+        }
       />
+
+      {recalcMsg && <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">{recalcMsg}</div>}
 
       {isError ? (
         <EmptyState>Не удалось загрузить ведомости.</EmptyState>

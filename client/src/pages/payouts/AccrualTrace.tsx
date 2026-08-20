@@ -1,7 +1,10 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../../api/client';
 import { PageHeader, Spinner, EmptyState, Badge } from '../../components/ui';
+import { PatientField } from '../../components/PatientField';
+import { OperationSelect } from '../../components/OperationSelect';
 
 // Экран «Как посчитано» (Э2-5): пошаговый расчёт начислений по операции из calcTrace
 // с подписью применённой версии схемы. Только администратор.
@@ -34,8 +37,10 @@ const STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'blue' |
 };
 
 export function AccrualTrace() {
-  const [input, setInput] = useState('');
-  const [opId, setOpId] = useState<number | null>(null);
+  const [params] = useSearchParams();
+  const paramOp = params.get('operationId');
+  const [patientId, setPatientId] = useState<number | null>(null);
+  const [opId, setOpId] = useState<number | null>(paramOp ? Number(paramOp) : null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['payout-accruals', opId],
@@ -46,23 +51,23 @@ export function AccrualTrace() {
 
   return (
     <div>
-      <PageHeader title="Как посчитано" subtitle="Пошаговый расчёт начислений выплат по операции и применённая версия схемы." />
-      <form
-        className="mb-4 flex items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setOpId(input ? Number(input) : null);
-        }}
-      >
+      <PageHeader
+        title="Как посчитано"
+        subtitle="Здесь видно, из чего сложилась выплата врачу по конкретной операции. Обычно сюда переходят по клику из реестра ведомости; можно и выбрать операцию вручную."
+      />
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
         <div>
-          <label className="label">ID операции</label>
-          <input className="input w-40" value={input} onChange={(e) => setInput(e.target.value)} placeholder="напр. 102" />
+          <label className="label">Пациент</label>
+          <PatientField value={patientId} onChange={(v) => { setPatientId(v); setOpId(null); }} />
         </div>
-        <button className="btn-primary" type="submit">Показать</button>
-      </form>
+        <div>
+          <label className="label">Операция пациента</label>
+          <OperationSelect patientId={patientId} value={opId} onChange={(v) => setOpId(v)} />
+        </div>
+      </div>
 
       {opId == null ? (
-        <EmptyState>Укажите ID операции, чтобы увидеть расчёт начислений.</EmptyState>
+        <EmptyState>Выберите пациента и его операцию — покажем пошаговый расчёт начисления.</EmptyState>
       ) : isError ? (
         <EmptyState>Не удалось загрузить данные.</EmptyState>
       ) : isLoading ? (

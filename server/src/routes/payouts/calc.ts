@@ -64,19 +64,26 @@ router.post(
   '/recalculate',
   asyncHandler(async (req, res) => {
     const d = recalcSchema.parse(req.body);
-    const where: Record<string, unknown> = { deletedAt: null, participants: { some: {} } };
+    const start = Date.now();
+    const base = await loadRecalcContext(prisma); // ставки, компоненты и метки получателей — один раз на пакет
+    const rctx = { ...base, errors: [] as { operationId: number; message: string }[] };
+    const labels = [...(rctx.payeesByLabel?.keys() ?? [])];
+
+    const where: Record<string, unknown> = { deletedAt: null };
     if (d.operationIds?.length) {
       where.id = { in: d.operationIds };
-    } else if (d.from || d.to) {
-      const range: Record<string, Date> = {};
-      if (d.from) range.gte = new Date(d.from);
-      if (d.to) range.lt = new Date(d.to); // полуоткрытый интервал [from, to)
-      where.dateOp = range;
+    } else {
+      // Операции, по которым вообще может быть начисление: есть явный участник ИЛИ
+      // хирург/анестезиолог совпадает с меткой справочника какого-либо получателя.
+      where.OR = [{ participants: { some: {} } }, { surgeon: { in: labels } }, { anesthesiologist: { in: labels } }];
+      if (d.from || d.to) {
+        const range: Record<string, Date> = {};
+        if (d.from) range.gte = new Date(d.from);
+        if (d.to) range.lte = new Date(d.to); // включительно
+        where.dateOp = range;
+      }
     }
     const ops = await prisma.operation.findMany({ where, select: { id: true } });
-
-    const start = Date.now();
-    const rctx = await loadRecalcContext(prisma); // ставки и компоненты — один раз на весь пакет
     for (const o of ops) {
       await prisma.$transaction((tx) => recalcOperation(o.id, tx, rctx));
     }
@@ -85,10 +92,18 @@ router.post(
       ? await prisma.payoutAccrual.groupBy({ by: ['operationId'], where: { operationId: { in: opIds } }, _count: { _all: true } })
       : [];
     const accruals = grouped.reduce((s, g) => s + g._count._all, 0);
+    // Топ-причин, по которым начисления не посчитались (нет ставки, нет доли и т.п.).
+    const byReason = new Map<string, number>();
+    for (const e of rctx.errors) {
+      const key = e.message.replace(/ на дату .*/, ''); // группируем по причине без конкретной даты
+      byReason.set(key, (byReason.get(key) ?? 0) + 1);
+    }
+    const errors = [...byReason.entries()].sort((a, b) => b[1] - a[1]).map(([message, count]) => ({ message, count }));
     res.json({
       processed: ops.length,
       accruals,
-      skipped: ops.length - grouped.length, // без начислений (нет схемы / кривая схема)
+      skipped: ops.length - grouped.length, // без начислений (нет схемы / кривая схема / ошибка расчёта)
+      errors, // причины пропуска расчёта
       ms: Date.now() - start,
     });
   }),

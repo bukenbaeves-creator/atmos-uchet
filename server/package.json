@@ -13,7 +13,9 @@
     "test:engine": "tsx src/scripts/test-payout-engine.ts",
     "test:sheets": "tsx src/scripts/test-payout-sheets.ts",
     "test:registry": "tsx src/scripts/test-payout-registry.ts",
-    "test:anesthesia": "tsx src/scripts/test-payout-anesthesia.ts"
+    "test:anesthesia": "tsx src/scripts/test-payout-anesthesia.ts",
+    "reset:payouts": "tsx src/scripts/reset-payouts.ts",
+    "test:derive": "tsx src/scripts/test-payout-derive.ts"
   },
   "prisma": {
     "seed": "tsx src/seed/index.ts"

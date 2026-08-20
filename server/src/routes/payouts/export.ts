@@ -6,8 +6,9 @@ import { requireAdmin } from '../../middleware/rbac.js';
 import { writeAudit } from '../../services/audit.service.js';
 import { getSheet, getSheetRegistry } from '../../services/payout-sheet.service.js';
 
-// Выгрузка ведомости в Excel (Э4-3): сводный лист + лист на каждого врача с реестром.
-// Колонки, порядок и итоги — как на экране. Числовой формат «# ##0», закреплённая шапка.
+// Выгрузка ведомости в Excel (Э4-3 + доработка): сводный лист + лист на каждого врача.
+// Ячейки «Начислено» и итоги — ЖИВЫЕ ФОРМУЛЫ Excel: (База − Σ вычетов до доли) × Доля −
+// Σ вычетов после доли; итоги через =SUM(). Числовой формат «# ##0», закреплённая шапка.
 const router = Router();
 router.use(requireAuth, requireAdmin);
 
@@ -23,7 +24,7 @@ router.get(
     const sheet = await getSheet(id);
     const wb = new ExcelJS.Workbook();
 
-    // --- Сводный лист ---
+    // --- Сводный лист (итоги — формулы =SUM) ---
     const sum = wb.addWorksheet('Сводка');
     sum.columns = [
       { header: 'Врач', key: 'fio', width: 28 },
@@ -36,24 +37,25 @@ router.get(
     ];
     sum.getRow(1).font = { bold: true };
     sum.views = [{ state: 'frozen', ySplit: 1 }];
-    let tA = 0;
-    let tP = 0;
-    let tPaid = 0;
-    let tD = 0;
+    let r = 1;
     for (const l of sheet.lines) {
+      r++;
       const withh = ((l.withholdings as Array<{ amount: number }>) ?? []).reduce((s, w) => s + num(w.amount), 0);
-      const debt = num(l.toPay) - num(l.paidTotal);
-      sum.addRow({ fio: l.payee?.fio ?? '—', ops: l.operationsCount, accrued: num(l.accruedTotal), withh, toPay: num(l.toPay), paid: num(l.paidTotal), debt });
-      tA += num(l.accruedTotal);
-      tP += num(l.toPay);
-      tPaid += num(l.paidTotal);
-      tD += debt;
+      const row = sum.addRow({ fio: l.payee?.fio ?? '—', ops: l.operationsCount, accrued: num(l.accruedTotal), withh, toPay: num(l.toPay), paid: num(l.paidTotal) });
+      // Остаток = К выплате − Выплачено (формула).
+      row.getCell('debt').value = { formula: `E${r}-F${r}`, result: num(l.toPay) - num(l.paidTotal) };
     }
-    const totalRow = sum.addRow({ fio: 'ИТОГО', accrued: tA, toPay: tP, paid: tPaid, debt: tD });
-    totalRow.font = { bold: true };
+    if (sheet.lines.length) {
+      const last = r;
+      const tr = sum.addRow({ fio: 'ИТОГО' });
+      for (const [key, col] of [['accrued', 'C'], ['withh', 'D'], ['toPay', 'E'], ['paid', 'F'], ['debt', 'G']] as const) {
+        tr.getCell(key).value = { formula: `SUM(${col}2:${col}${last})`, result: undefined };
+      }
+      tr.font = { bold: true };
+    }
     for (const k of ['accrued', 'withh', 'toPay', 'paid', 'debt']) sum.getColumn(k).numFmt = MONEY;
 
-    // --- Лист на каждого врача (реестр с динамическими колонками) ---
+    // --- Лист на каждого врача (реестр + формула начисления) ---
     let idx = 0;
     for (const l of sheet.lines) {
       idx += 1;
@@ -65,30 +67,47 @@ router.get(
         { header: 'Вид операции', key: 'opType', width: 20 },
         { header: 'База', key: 'base', width: 14 },
         ...reg.columns.map((c) => ({ header: c.label, key: `c_${c.code}`, width: 16 })),
-        { header: 'Доля', key: 'share', width: 8 },
+        { header: 'Доля', key: 'share', width: 9 },
         { header: 'Начислено', key: 'amount', width: 16 },
       ];
       ws.getRow(1).font = { bold: true };
       ws.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
-      for (const r of reg.rows) {
-        const row: Record<string, unknown> = {
-          date: dstr(r.dateOp),
-          patient: r.patient ?? (r.isCorrection ? 'корректировка' : ''),
-          opType: r.opType ?? '',
-          base: r.base,
-          share: `${Math.round(r.sharePct * 100)}%`,
-          amount: r.amount,
-        };
-        for (const c of reg.columns) row[`c_${c.code}`] = r.components[c.code] ?? 0;
-        ws.addRow(row);
+
+      // Буквы колонок для формул.
+      const baseCol = ws.getColumn('base').letter;
+      const shareCol = ws.getColumn('share').letter;
+      const beforeLetters = reg.columns.filter((c) => c.stage === 'before_share').map((c) => ws.getColumn(`c_${c.code}`).letter);
+      const afterLetters = reg.columns.filter((c) => c.stage === 'after_share').map((c) => ws.getColumn(`c_${c.code}`).letter);
+
+      let rn = 1; // строка шапки
+      for (const row of reg.rows) {
+        rn++;
+        const xr = ws.addRow({
+          date: dstr(row.dateOp),
+          patient: row.patient ?? (row.isCorrection ? 'корректировка' : ''),
+          opType: row.opType ?? '',
+          base: row.base,
+          share: row.sharePct,
+        });
+        for (const c of reg.columns) xr.getCell(`c_${c.code}`).value = row.components[c.code] ?? 0;
+        // Начислено = (База − Σ вычетов до доли) × Доля − Σ вычетов после доли.
+        const before = beforeLetters.map((L) => `${L}${rn}`).join('+') || '0';
+        const after = afterLetters.map((L) => `${L}${rn}`).join('+') || '0';
+        const formula = `(${baseCol}${rn}-(${before}))*${shareCol}${rn}-(${after})`;
+        xr.getCell('amount').value = { formula, result: row.amount };
       }
-      const tr = ws.addRow({
-        patient: 'ИТОГО',
-        amount: reg.totals.amount,
-        ...Object.fromEntries(reg.columns.map((c) => [`c_${c.code}`, reg.totals.perComponent[c.code]])),
-      });
-      tr.font = { bold: true };
+      // Итоги (=SUM) по числовым колонкам.
+      if (reg.rows.length) {
+        const last = rn;
+        const tr = ws.addRow({ patient: 'ИТОГО' });
+        for (const key of ['base', ...reg.columns.map((c) => `c_${c.code}`), 'amount']) {
+          const L = ws.getColumn(key).letter;
+          tr.getCell(key).value = { formula: `SUM(${L}2:${L}${last})`, result: undefined };
+        }
+        tr.font = { bold: true };
+      }
       for (const k of ['base', 'amount', ...reg.columns.map((c) => `c_${c.code}`)]) ws.getColumn(k).numFmt = MONEY;
+      ws.getColumn('share').numFmt = '0%';
     }
 
     await writeAudit(req, { action: 'export', entity: 'payoutSheet', entityId: id, after: { number: sheet.number } });

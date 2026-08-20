@@ -70,7 +70,14 @@ export function Registry() {
         subtitle="Операции врача с развёрнутыми компонентами расчёта. Набор колонок — по схеме врача."
         actions={<button className="btn-ghost" onClick={() => nav(`/payouts/sheets/${id}`)}>К ведомости</button>}
       />
-      <DataTable columns={cols} rows={data.rows} totals={totals} rowAccent={(r) => (r.isCorrection ? '#f59e0b' : undefined)} />
+      <p className="mb-2 text-xs text-slate-400">Клик по строке — расшифровка расчёта операции («Как посчитано»).</p>
+      <DataTable
+        columns={cols}
+        rows={data.rows}
+        totals={totals}
+        rowAccent={(r) => (r.isCorrection ? '#f59e0b' : undefined)}
+        onRowClick={(r) => nav(`/payouts/trace?operationId=${r.operationId}`)}
+      />
     </div>
   );
 }
