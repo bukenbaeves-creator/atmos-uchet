@@ -12,6 +12,8 @@ import {
   dissolveSheet,
   listSheets,
   getSheet,
+  setWithholdings,
+  addLinePayment,
 } from '../../services/payout-sheet.service.js';
 
 // Ведомости выплат (Э3-2). Только администратор.
@@ -78,6 +80,37 @@ router.post(
     const { reason } = z.object({ reason: z.string().trim().min(1, 'Укажите причину роспуска').max(500) }).parse(req.body);
     if (!reason) throw badRequest('Укажите причину роспуска');
     res.json(await dissolveSheet(Number(req.params.id), reason, req));
+  }),
+);
+
+// Э3-3: удержания по строке (пересчёт toPay).
+router.patch(
+  '/:id/lines/:lineId/withholdings',
+  asyncHandler(async (req, res) => {
+    const { withholdings } = z
+      .object({
+        withholdings: z.array(
+          z.object({ type: z.string().trim().min(1), amount: z.coerce.number(), comment: z.string().trim().max(500).optional().nullable() }),
+        ),
+      })
+      .parse(req.body);
+    res.json(serialize(await setWithholdings(Number(req.params.id), Number(req.params.lineId), withholdings, req)));
+  }),
+);
+
+// Э3-3: фиксация выплаты по строке.
+router.post(
+  '/:id/lines/:lineId/payments',
+  asyncHandler(async (req, res) => {
+    const p = z
+      .object({
+        date: z.string().min(1, 'Укажите дату выплаты'),
+        amount: z.coerce.number().positive('Сумма выплаты должна быть больше нуля'),
+        channel: z.string().trim().min(1, 'Укажите канал выплаты'),
+        note: z.string().trim().max(500).optional().nullable(),
+      })
+      .parse(req.body);
+    res.json(serialize(await addLinePayment(Number(req.params.id), Number(req.params.lineId), p, req)));
   }),
 );
 

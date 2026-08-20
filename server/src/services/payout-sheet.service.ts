@@ -169,6 +169,55 @@ export async function dissolveSheet(sheetId: number, reason: string, req: Reques
   });
 }
 
+// Удержания по строке (Э3-3): ручной ввод бухгалтера, пересчёт toPay.
+export async function setWithholdings(
+  sheetId: number,
+  lineId: number,
+  withholdings: { type: string; amount: number; comment?: string | null }[],
+  req: Request,
+) {
+  return prisma.$transaction(async (tx) => {
+    const line = await tx.payoutSheetLine.findFirst({ where: { id: lineId, sheetId }, include: { sheet: true } });
+    if (!line) throw notFound('Строка ведомости не найдена');
+    if (line.sheet.status === 'paid') throw badRequest('Ведомость оплачена — удержания менять нельзя.');
+    const sum = round2(withholdings.reduce((s, w) => s + Number(w.amount), 0));
+    const toPay = round2(Number(line.accruedTotal) - sum);
+    const updated = await tx.payoutSheetLine.update({ where: { id: lineId }, data: { withholdings: withholdings as unknown as object, toPay } });
+    await writeAudit(req, { action: 'update', entity: 'payoutSheetLine', entityId: lineId, before: line, after: updated }, tx);
+    return getSheet(sheetId, tx);
+  });
+}
+
+// Фиксация выплаты по строке (Э3-3). Когда все строки оплачены (paidTotal ≥ toPay),
+// ведомость получает статус paid, а её начисления — статус paid.
+export async function addLinePayment(
+  sheetId: number,
+  lineId: number,
+  p: { date: string; amount: number; channel: string; note?: string | null },
+  req: Request,
+) {
+  return prisma.$transaction(async (tx) => {
+    const line = await tx.payoutSheetLine.findFirst({ where: { id: lineId, sheetId }, include: { sheet: true } });
+    if (!line) throw notFound('Строка ведомости не найдена');
+    if (line.sheet.status === 'draft') throw badRequest('Сначала утвердите ведомость.');
+    await tx.payoutPayment.create({
+      data: { lineId, date: new Date(p.date), amount: p.amount, channel: p.channel, note: p.note ?? null, createdBy: req.user!.id },
+    });
+    const agg = await tx.payoutPayment.aggregate({ where: { lineId }, _sum: { amount: true } });
+    const paidTotal = round2(Number(agg._sum.amount ?? 0));
+    await tx.payoutSheetLine.update({ where: { id: lineId }, data: { paidTotal } });
+
+    const lines = await tx.payoutSheetLine.findMany({ where: { sheetId } });
+    const fullyPaid = lines.every((l) => Number(l.paidTotal) + 0.005 >= Number(l.toPay));
+    if (fullyPaid && line.sheet.status !== 'paid') {
+      await tx.payoutSheet.update({ where: { id: sheetId }, data: { status: 'paid', paidAt: new Date(), updatedBy: req.user!.id } });
+      await tx.payoutAccrual.updateMany({ where: { sheetId }, data: { status: 'paid' } });
+    }
+    await writeAudit(req, { action: 'create', entity: 'payoutPayment', entityId: line.id, after: { lineId, amount: p.amount, channel: p.channel } }, tx);
+    return getSheet(sheetId, tx);
+  });
+}
+
 export async function listSheets() {
   return prisma.payoutSheet.findMany({ include: { lines: true }, orderBy: { createdAt: 'desc' } });
 }

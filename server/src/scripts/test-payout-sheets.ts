@@ -7,7 +7,7 @@
  */
 import { prisma } from '../lib/prisma.js';
 import { recalcOperation } from '../services/payout-engine.service.js';
-import { previewSheet, createSheet, approveSheet, dissolveSheet } from '../services/payout-sheet.service.js';
+import { previewSheet, createSheet, approveSheet, dissolveSheet, addLinePayment } from '../services/payout-sheet.service.js';
 
 const TAG = 'SHEET_TEST';
 const PHONE = '+70000000099';
@@ -53,14 +53,14 @@ async function main() {
   const patient = await prisma.patient.create({ data: { fio: `${TAG} Пациент`, phone: PHONE, city: 'Алматы' } });
 
   // Операция с полной оплатой на заданную дату → начисление cost*0.5.
-  async function makeOp(payDate: string) {
+  async function makeOp(payDate: string, cost = 1000000) {
     const op = await prisma.operation.create({
       data: {
-        patientId: patient.id, dateOp: new Date('2026-08-01T00:00:00Z'), cost: 1000000, anesthesiaCost: 0,
+        patientId: patient.id, dateOp: new Date('2026-08-01T00:00:00Z'), cost, anesthesiaCost: 0,
         zapis: 'КЛИНИКА', opType: TAG, participants: { create: [{ payeeId: payee.id, role: 'surgeon' }] },
       },
     });
-    await prisma.payment.create({ data: { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date(payDate + 'T00:00:00Z'), amount: 1000000, terminal: 'Наличные' } });
+    await prisma.payment.create({ data: { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date(payDate + 'T00:00:00Z'), amount: cost, terminal: 'Наличные' } });
     await recalcOperation(op.id, prisma);
     return op.id;
   }
@@ -68,6 +68,7 @@ async function main() {
   const B = await makeOp('2026-08-06');
   const C = await makeOp('2026-08-12');
   const E = await makeOp('2026-08-20');
+  const F = await makeOp('2026-08-28', 2000000); // начисление 1 000 000 для Т18
 
   console.log('=== Т11 — недельная ведомость (03–09 берёт две, третья в следующую) ===');
   const wk1 = await previewSheet({ kind: 'weekly', from: '2026-08-03', to: '2026-08-09', payeeIds: [payee.id] });
@@ -88,7 +89,9 @@ async function main() {
   const monthly = await previewSheet({ kind: 'monthly', from: '2026-08-01', to: '2026-08-31', payeeIds: [payee.id] });
   const cInMonthly = monthly.groups.some((g) => g.accrualIds.includes(cAccr!.id));
   check('C (adhoc, locked) не появляется в месячной', !cInMonthly);
-  check('A,B (в ведомости 1) тоже не в месячной', !monthly.groups.some((g) => g.operationsCount >= 2));
+  const lockedIds = (await prisma.payoutAccrual.findMany({ where: { operationId: { in: [A, B, C] }, status: 'locked' }, select: { id: true } })).map((x) => x.id);
+  const anyLockedInMonthly = monthly.groups.some((g) => g.accrualIds.some((id) => lockedIds.includes(id)));
+  check('A,B,C (locked) не в месячной', !anyLockedInMonthly);
 
   console.log('\n=== Т15 — роспуск возвращает начисления в свободные; повтор невозможен ===');
   const sheetE = await createSheet({ kind: 'weekly', from: '2026-08-17', to: '2026-08-23', payeeIds: [payee.id] }, null, req);
@@ -118,6 +121,23 @@ async function main() {
   check('утверждённое начисление A не изменилось (500 000, locked)', aLocked != null && Number(aLocked.amount) === 500000);
   check('создано отрицательное свободное начисление -250 000', aNeg != null && Number(aNeg.amount) === -250000);
 
+  console.log('\n=== Т18 — остаток долга обнуляется после фиксации выплаты ===');
+  const sheetF = await createSheet({ kind: 'custom', from: '2026-08-28', to: '2026-08-28', payeeIds: [payee.id] }, null, req);
+  sheetIds.push(sheetF.id);
+  const apprF = await approveSheet(sheetF.id, req);
+  const lineF = apprF.lines[0];
+  check('строка F: начислено = toPay = 1 000 000', Number(lineF.accruedTotal) === 1000000 && Number(lineF.toPay) === 1000000);
+  const afterPart = await addLinePayment(sheetF.id, lineF.id, { date: '2026-09-01', amount: 600000, channel: 'на расчётный счёт' }, req);
+  const lineAfter600 = afterPart.lines[0];
+  check('после 600 000 остаток долга = 400 000', Number(lineAfter600.toPay) - Number(lineAfter600.paidTotal) === 400000);
+  check('ведомость ещё не оплачена', afterPart.status === 'approved');
+  const afterFull = await addLinePayment(sheetF.id, lineF.id, { date: '2026-09-02', amount: 400000, channel: 'наличные' }, req);
+  const lineFull = afterFull.lines[0];
+  check('после доплаты 400 000 остаток = 0', Number(lineFull.toPay) - Number(lineFull.paidTotal) === 0);
+  check('ведомость получила статус paid', afterFull.status === 'paid');
+  const fPaid = await prisma.payoutAccrual.count({ where: { operationId: F, status: 'paid' } });
+  check('начисление операции F стало paid', fPaid === 1);
+
   await cleanup();
 }
 
@@ -125,7 +145,7 @@ main()
   .then(async () => {
     await prisma.$disconnect();
     if (failed) { console.error(`\nПРОВАЛЕНО проверок: ${failed}`); process.exit(1); }
-    console.log('\nВсе тесты ведомостей (Т11, Т13, Т14, Т15) пройдены.');
+    console.log('\nВсе тесты ведомостей (Т11, Т13, Т14, Т15, Т18) пройдены.');
     process.exit(0);
   })
   .catch(async (e) => { console.error('Ошибка теста ведомостей:', e); await cleanup().catch(() => {}); await prisma.$disconnect(); process.exit(1); });
