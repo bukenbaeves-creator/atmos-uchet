@@ -1,0 +1,286 @@
+{
+  "$описание": "Фикстуры приёмочных тестов расчётного ядра модуля «Выплаты врачам» (задача Э2-1). Все числа выведены из рабочего файла клиники «расчет после обн 1.xlsx» и проверены пересчётом. Это авторитетный источник ожидаемых значений: подгонять код под другие числа нельзя.",
+  "$версия": "1.0",
+  "$дата": "2026-08-19",
+
+  "$соглашения": {
+    "база_начисления": "base = operation.cost + operation.anesthesiaCost. ВНИМАНИЕ: в Excel «сумма операции» включает наркоз, а наркоз затем вычитается как расход. Поэтому в фикстурах cost = сумма операции минус наркоз, anesthesiaCost = наркоз. База при этом равна «сумме операции» из Excel.",
+    "комиссия": "acquiring = сумма по каждому платежу × ставка терминала на дату платежа. Наличные и рассрочка — 0, если не указано иное. Если ставки на дату платежа нет — расчёт должен падать с ошибкой, а не подставлять 0.",
+    "порядок": "amountFull = (base − Σ компонентов before_share) × share − Σ компонентов after_share",
+    "коэффициент_оплаты": "k = min(1, оплачено / base); amount = round2(amountFull × k) − уже начисленное по операции",
+    "округление": "round2 только на итоговых значениях; промежуточные не округлять",
+    "переопределение_комиссии": "useOwnValue=true в строке схемы → ставка берётся из value и применяется ко ВСЕЙ сумме платежей независимо от терминала"
+  },
+
+  "acquiringRates": [
+    { "terminal": "Каспи Т1", "ratePct": 1.5, "validFrom": "2020-01-01" },
+    { "terminal": "Каспи Т3", "ratePct": 1.5, "validFrom": "2020-01-01" },
+    { "terminal": "Форте",    "ratePct": 2.3, "validFrom": "2020-01-01" },
+    { "terminal": "Халык",    "ratePct": 2.0, "validFrom": "2020-01-01" },
+    { "terminal": "Рассрочка","ratePct": 0.0, "validFrom": "2020-01-01" },
+    { "terminal": "Наличные", "ratePct": 0.0, "validFrom": "2020-01-01" },
+    { "terminal": "Каспи Т1", "ratePct": 1.0, "validFrom": "2026-01-01", "$комментарий": "ставка, действующая в тестах Т1 и Т6" }
+  ],
+
+  "tests": [
+    {
+      "id": "Т1",
+      "название": "Модель «50/50» — Сулейманова",
+      "источник": "лист «Сулейманова Новая форма», строка 3, пациент Бимаганбет Р., 07.01.2026",
+      "operation": {
+        "dateOp": "2026-01-07",
+        "cost": 1500000,
+        "anesthesiaCost": 150000,
+        "implantsCost": 0,
+        "assistantCost": 10000,
+        "zapis": "КЛИНИКА",
+        "opType": "Подтяжка лица"
+      },
+      "payments": [
+        { "date": "2026-01-07", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 1650000, "direction": "payment" }
+      ],
+      "materialsFact": 70000,
+      "scheme": {
+        "kind": "share_based",
+        "shareMode": "constant",
+        "shareValue": 0.5,
+        "components": [
+          { "code": "acquiring",  "enabled": true,  "stage": "before_share", "useOwnValue": false },
+          { "code": "anesthesia", "enabled": true,  "stage": "before_share" },
+          { "code": "implants",   "enabled": true,  "stage": "before_share" },
+          { "code": "materials",  "enabled": true,  "stage": "before_share" },
+          { "code": "assistant",  "enabled": true,  "stage": "before_share" },
+          { "code": "admin_bonus","enabled": false, "stage": "after_share" }
+        ]
+      },
+      "expected": {
+        "base": 1650000,
+        "components": { "acquiring": 16500, "anesthesia": 150000, "implants": 0, "materials": 70000, "assistant": 10000 },
+        "baseForShare": 1403500,
+        "sharePct": 0.5,
+        "amountFull": 701750,
+        "paidRatio": 1,
+        "amount": 701750
+      },
+      "$примечание": "Удержание 71 767 ₸ в Excel вводилось вручную и в расчётное ядро не входит: к выплате 629 983 ₸ проверяется на этапе ведомости, а не здесь."
+    },
+
+    {
+      "id": "Т2",
+      "название": "Модель «% от чистой» — Кулесбаев, источник ВРАЧ",
+      "источник": "лист «Кулесбаев А», строка 3, пациент Куанова Д., 06.01.2025",
+      "operation": {
+        "dateOp": "2025-01-06",
+        "cost": 1900000,
+        "anesthesiaCost": 0,
+        "implantsCost": 0,
+        "assistantCost": 0,
+        "zapis": "ВРАЧ",
+        "opType": "Риносептопластика"
+      },
+      "payments": [
+        { "date": "2025-01-06", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 600000, "direction": "payment" },
+        { "date": "2025-01-06", "terminal": "Рассрочка", "payMethod": "Рассрочка",     "amount": 1300000, "direction": "payment" }
+      ],
+      "materialsFact": 0,
+      "scheme": {
+        "kind": "share_based",
+        "shareMode": "by_source",
+        "shareBySource": { "ВРАЧ": 0.6, "КЛИНИКА": 0.5 },
+        "components": [
+          { "code": "acquiring",  "enabled": true,  "stage": "before_share", "useOwnValue": false },
+          { "code": "anesthesia", "enabled": true,  "stage": "before_share" },
+          { "code": "materials",  "enabled": true,  "stage": "before_share" },
+          { "code": "implants",   "enabled": false },
+          { "code": "assistant",  "enabled": false },
+          { "code": "day_rent",   "enabled": true,  "stage": "after_share", "useOwnValue": true, "value": 10000 }
+        ]
+      },
+      "expected": {
+        "base": 1900000,
+        "components": { "acquiring": 9000, "anesthesia": 0, "materials": 0, "day_rent": 10000 },
+        "baseForShare": 1891000,
+        "sharePct": 0.6,
+        "amountFull": 1124600,
+        "paidRatio": 1,
+        "amount": 1124600
+      },
+      "$примечание": "Рассрочка комиссией не облагается (ставка 0). Комиссия 9 000 = 600 000 × 1,5%."
+    },
+
+    {
+      "id": "Т3",
+      "название": "Та же схема, источник КЛИНИКА — доля меняется на 50%",
+      "источник": "лист «Кулесбаев А», строка 15, пациент Умирзаков Е., 30.01.2025",
+      "operation": {
+        "dateOp": "2025-01-30",
+        "cost": 1500000,
+        "anesthesiaCost": 0,
+        "implantsCost": 0,
+        "assistantCost": 0,
+        "zapis": "КЛИНИКА",
+        "opType": "Риносептопластика"
+      },
+      "payments": [
+        { "date": "2025-01-30", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 1500000, "direction": "payment" }
+      ],
+      "materialsFact": 0,
+      "scheme": { "$ссылка": "схема из Т2" },
+      "expected": {
+        "base": 1500000,
+        "components": { "acquiring": 22500, "day_rent": 10000 },
+        "baseForShare": 1477500,
+        "sharePct": 0.5,
+        "amountFull": 728750,
+        "paidRatio": 1,
+        "amount": 728750
+      }
+    },
+
+    {
+      "id": "Т4",
+      "название": "Модель «30%» — резидент",
+      "источник": "лист «резид», строка 55, пациент Сагидолда Ш., 20.05.2025",
+      "operation": {
+        "dateOp": "2025-05-20",
+        "cost": 200000,
+        "anesthesiaCost": 0,
+        "implantsCost": 0,
+        "assistantCost": 0,
+        "zapis": "ВРАЧ",
+        "opType": "Коррекция пупка"
+      },
+      "payments": [
+        { "date": "2025-05-20", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 200000, "direction": "payment" }
+      ],
+      "materialsFact": 15000,
+      "scheme": {
+        "kind": "share_based",
+        "shareMode": "constant",
+        "shareValue": 0.3,
+        "components": [
+          { "code": "acquiring",   "enabled": true, "stage": "before_share", "useOwnValue": true, "value": 1.0 },
+          { "code": "operation_tax","enabled": true, "stage": "before_share", "useOwnValue": true, "value": 4.0 },
+          { "code": "materials",   "enabled": true, "stage": "before_share" },
+          { "code": "anesthesia",  "enabled": true, "stage": "before_share" },
+          { "code": "admin_bonus", "enabled": true, "stage": "after_share",  "useOwnValue": true, "value": 5000 }
+        ]
+      },
+      "expected": {
+        "base": 200000,
+        "components": { "acquiring": 2000, "operation_tax": 8000, "materials": 15000, "anesthesia": 0, "admin_bonus": 5000 },
+        "baseForShare": 175000,
+        "sharePct": 0.3,
+        "amountFull": 47500,
+        "paidRatio": 1,
+        "amount": 47500
+      },
+      "$примечание": "Ставка «налога с операции» у резидентов в Excel менялась: 3% в апреле 2025, 4% в мае. В тесте — 4%, как в исходной строке."
+    },
+
+    {
+      "id": "Т5а",
+      "название": "Анестезиолог — тариф по типу наркоза без шкалы",
+      "источник": "лист «Бекжан», расчёт за январь 2025",
+      "scheme": {
+        "kind": "tariff_based",
+        "tariffs": [
+          { "anesthesiaType": "общий",        "minCount": 1, "maxCount": null, "amount": 35000 },
+          { "anesthesiaType": "седация",      "minCount": 1, "maxCount": null, "amount": 30000 },
+          { "anesthesiaType": "седация-фейс", "minCount": 1, "maxCount": null, "amount": 35000 }
+        ]
+      },
+      "operations": [
+        { "dateOp": "2025-01-12", "anesthesiaType": "общий" },
+        { "dateOp": "2025-01-18", "anesthesiaType": "общий" },
+        { "dateOp": "2025-01-19", "anesthesiaType": "общий" }
+      ],
+      "expected": { "count": 3, "ratePerOperation": 35000, "amountTotal": 105000 }
+    },
+
+    {
+      "id": "Т5б",
+      "название": "Анестезиолог — регрессивная шкала и расчёт по нижней ставке",
+      "источник": "лист «тариф анест»",
+      "scheme": {
+        "kind": "tariff_based",
+        "tariffs": [
+          { "anesthesiaType": "общий", "minCount": 1, "maxCount": 5,    "amount": 40000 },
+          { "anesthesiaType": "общий", "minCount": 6, "maxCount": 8,    "amount": 37000 },
+          { "anesthesiaType": "общий", "minCount": 9, "maxCount": null, "amount": 35000 }
+        ],
+        "lowestRate": 35000
+      },
+      "операций_за_месяц": 4,
+      "expected": {
+        "недельная_ведомость": { "ratePerOperation": 35000, "amountTotal": 140000, "$комментарий": "нижняя ставка, ступень ещё неизвестна" },
+        "месячная_ведомость":  { "фактическая_ступень": 40000, "корректировка": 20000, "amountTotal": 160000 }
+      }
+    },
+
+    {
+      "id": "Т6",
+      "название": "Гибкость конструктора — выключение компонента «Расходные материалы»",
+      "исходные_данные": "полностью совпадают с Т1",
+      "изменение": "в схеме снята галочка у компонента materials",
+      "expected": {
+        "base": 1650000,
+        "components": { "acquiring": 16500, "anesthesia": 150000, "implants": 0, "assistant": 10000 },
+        "baseForShare": 1473500,
+        "sharePct": 0.5,
+        "amountFull": 736750,
+        "разница_с_Т1": 35000
+      }
+    },
+
+    {
+      "id": "Т7",
+      "название": "Переопределение комиссии в схеме врача",
+      "operation": { "dateOp": "2026-02-10", "cost": 1000000, "anesthesiaCost": 0, "implantsCost": 0, "assistantCost": 0, "zapis": "КЛИНИКА" },
+      "payments": [
+        { "date": "2026-02-10", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 1000000, "direction": "payment" }
+      ],
+      "materialsFact": 0,
+      "scheme": {
+        "kind": "share_based",
+        "shareMode": "constant",
+        "shareValue": 0.5,
+        "components": [
+          { "code": "acquiring", "enabled": true, "stage": "before_share", "useOwnValue": true, "value": 2.0 }
+        ]
+      },
+      "expected": {
+        "base": 1000000,
+        "components": { "acquiring": 20000 },
+        "baseForShare": 980000,
+        "amountFull": 490000,
+        "$комментарий": "20 000 = 2% от всей суммы платежей, а НЕ 15 000 по справочной ставке Каспи 1,5%"
+      }
+    },
+
+    {
+      "id": "Т12",
+      "название": "Частичная оплата в разных периодах (проверка движка Э2-2)",
+      "operation": { "dateOp": "2026-08-01", "cost": 1000000, "anesthesiaCost": 0, "implantsCost": 0, "assistantCost": 0, "zapis": "КЛИНИКА" },
+      "payments": [
+        { "date": "2026-08-05", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 400000, "direction": "payment" },
+        { "date": "2026-09-12", "terminal": "Каспи Т1", "payMethod": "Через терминал", "amount": 600000, "direction": "payment" }
+      ],
+      "materialsFact": 0,
+      "scheme": {
+        "kind": "share_based",
+        "shareMode": "constant",
+        "shareValue": 0.5,
+        "components": [ { "code": "acquiring", "enabled": true, "stage": "before_share", "useOwnValue": false } ]
+      },
+      "expected": {
+        "начисления": [
+          { "eventDate": "2026-08-05", "paidRatio": 0.4, "acquiring": 6000,  "amountFull": 497000, "amount": 198800 },
+          { "eventDate": "2026-09-12", "paidRatio": 1.0, "acquiring": 15000, "amountFull": 492500, "amount": 293700 }
+        ],
+        "итого_по_операции": 492500,
+        "$комментарий": "Комиссия считается по фактически поступившим платежам, поэтому amountFull пересчитывается при каждом событии. Сумма начислений всегда сходится к финальному amountFull — задвоения быть не должно."
+      }
+    }
+  ]
+}
