@@ -117,6 +117,27 @@ export const SYSTEM_COMPONENT_META: Record<
 
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
+// ---- Тарифы анестезиологов (Э6-1) ----
+export interface AnesthesiaTariffInput {
+  anesthesiaType: string;
+  minCount: number;
+  maxCount: number | null;
+  amount: number;
+}
+// Ставка за операцию для данного типа наркоза и количества операций (ступень шкалы).
+export function anesthesiaTariffRate(tariffs: AnesthesiaTariffInput[], type: string, count: number): number | null {
+  const forType = tariffs.filter((t) => t.anesthesiaType === type);
+  if (!forType.length) return null;
+  const step = forType.find((t) => count >= t.minCount && (t.maxCount == null || count <= t.maxCount));
+  return step ? Number(step.amount) : null;
+}
+// Нижняя ставка типа наркоза (применяется в недельных и произвольных ведомостях).
+export function lowestAnesthesiaRate(tariffs: AnesthesiaTariffInput[], type: string): number | null {
+  const forType = tariffs.filter((t) => t.anesthesiaType === type);
+  if (!forType.length) return null;
+  return Math.min(...forType.map((t) => Number(t.amount)));
+}
+
 // Ставка терминала, действующая на дату платежа: последняя запись с validFrom ≤ date.
 // Отсутствие ставки — ошибка (а не молчаливый ноль), как требует «$соглашения».
 export function resolveAcquiringRate(rates: AcquiringRateInput[], terminal: string | null, date: string): number {

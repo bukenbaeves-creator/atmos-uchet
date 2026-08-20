@@ -2,9 +2,11 @@ import type { PrismaClientOrTx } from '../lib/prisma.js';
 import { round2 } from './compute.js';
 import {
   calcPayout,
+  lowestAnesthesiaRate,
   type CalcComponentInput,
   type CalcScheme,
   type AcquiringRateInput,
+  type AnesthesiaTariffInput,
 } from './payout-calc.service.js';
 import { getSchemeForDate } from './payout-scheme.service.js';
 
@@ -45,6 +47,50 @@ export function buildCalcScheme(dbScheme: Record<string, any>, componentsById: M
     shareBySource,
     components,
   };
+}
+
+// Начисление анестезиолога по операции: одно на операцию, по нижней ставке тарифа.
+async function syncTariffAccrual(
+  tx: PrismaClientOrTx,
+  op: { id: number; dateOp: Date | null },
+  part: { payeeId: number; anesthesiaType: string | null },
+  scheme: Record<string, any>,
+) {
+  const type = part.anesthesiaType ?? 'общий';
+  const tariffs: AnesthesiaTariffInput[] = (scheme.tariffs ?? []).map((t: Record<string, any>) => ({
+    anesthesiaType: t.anesthesiaType,
+    minCount: t.minCount,
+    maxCount: t.maxCount,
+    amount: Number(t.amount),
+  }));
+  const lowest = lowestAnesthesiaRate(tariffs, type);
+  const existing = await tx.payoutAccrual.findMany({ where: { operationId: op.id, payeeId: part.payeeId } });
+  if (lowest == null) {
+    for (const e of existing) if (e.status === 'free') await tx.payoutAccrual.delete({ where: { id: e.id } });
+    return;
+  }
+  const data = {
+    schemeId: scheme.id,
+    schemeVersion: scheme.version,
+    triggerPaymentId: null,
+    eventDate: op.dateOp!,
+    isCorrection: false,
+    base: lowest,
+    paidRatio: 1,
+    sharePct: 1,
+    components: [{ code: 'anesthesia_tariff', label: `Наркоз (тариф, ${type})`, stage: 'after_share', direction: 'addition', amount: lowest, anesthesiaType: type }] as unknown as object,
+    amountFull: lowest,
+    amount: lowest,
+    calcTrace: [{ label: `Тариф «${type}» (нижняя ставка)`, value: lowest }] as unknown as object,
+  };
+  const ex = existing.find((e) => !e.isCorrection && e.triggerPaymentId === null);
+  if (ex) {
+    if (ex.status === 'free') await tx.payoutAccrual.update({ where: { id: ex.id }, data });
+  } else {
+    await tx.payoutAccrual.create({ data: { ...data, payeeId: part.payeeId, operationId: op.id } });
+  }
+  // Платёж-триггерные начисления для тарифа не нужны — убрать свободные, если появились.
+  for (const e of existing) if (e.triggerPaymentId !== null && e.status === 'free') await tx.payoutAccrual.delete({ where: { id: e.id } });
 }
 
 // Преднагруженный справочный контекст для массового пересчёта («данные читать пакетно»):
@@ -117,7 +163,15 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   for (const part of op.participants) {
    try {
     const scheme = await getSchemeForDate(part.payeeId, op.dateOp, tx);
-    if (!scheme || scheme.kind !== 'share_based') continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
+    if (!scheme) continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
+
+    // Анестезиолог (тариф): одно начисление на операцию по НИЖНЕЙ ставке. Фактическая
+    // ступень и «Корректировка ставки по итогу месяца» определяются при утверждении
+    // месячной ведомости (Э6-1, ТЗ 2.12/4.6).
+    if (scheme.kind === 'tariff_based') {
+      await syncTariffAccrual(tx, op, part, scheme as unknown as Record<string, any>);
+      continue;
+    }
 
     const calcScheme = buildCalcScheme(scheme as unknown as Record<string, any>, componentsById);
 

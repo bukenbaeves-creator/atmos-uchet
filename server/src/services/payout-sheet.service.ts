@@ -3,6 +3,8 @@ import { prisma, type PrismaClientOrTx } from '../lib/prisma.js';
 import { round2 } from './compute.js';
 import { badRequest, notFound } from '../lib/http.js';
 import { writeAudit } from './audit.service.js';
+import { getSchemeForDate } from './payout-scheme.service.js';
+import { anesthesiaTariffRate, lowestAnesthesiaRate, type AnesthesiaTariffInput } from './payout-calc.service.js';
 
 // ===================== Сервис ведомостей выплат (Э3-2/Э3-3) =====================
 // Жёсткие инварианты:
@@ -44,6 +46,7 @@ interface PreviewGroup {
   accruedTotal: number;
   accrualIds: number[];
   hasCorrections: boolean;
+  hasTariff: boolean;
 }
 
 async function groupAccruals(where: Record<string, unknown>, tx: PrismaClientOrTx): Promise<PreviewGroup[]> {
@@ -52,13 +55,14 @@ async function groupAccruals(where: Record<string, unknown>, tx: PrismaClientOrT
   for (const a of accruals) {
     let g = byPayee.get(a.payeeId);
     if (!g) {
-      g = { payeeId: a.payeeId, fio: a.payee?.fio ?? `#${a.payeeId}`, operationsCount: 0, accruedTotal: 0, accrualIds: [], hasCorrections: false, ops: new Set() };
+      g = { payeeId: a.payeeId, fio: a.payee?.fio ?? `#${a.payeeId}`, operationsCount: 0, accruedTotal: 0, accrualIds: [], hasCorrections: false, hasTariff: false, ops: new Set() };
       byPayee.set(a.payeeId, g);
     }
     g.accruedTotal = round2(g.accruedTotal + Number(a.amount));
     g.accrualIds.push(a.id);
     g.ops.add(a.operationId);
     if (a.isCorrection) g.hasCorrections = true;
+    if (((a.components as Array<{ code: string }>) ?? []).some((c) => c.code === 'anesthesia_tariff')) g.hasTariff = true;
   }
   return [...byPayee.values()].map((g) => ({ ...g, operationsCount: g.ops.size, ops: undefined as never }));
 }
@@ -67,6 +71,11 @@ async function groupAccruals(where: Record<string, unknown>, tx: PrismaClientOrT
 export async function previewSheet(f: SheetFilter) {
   const groups = await groupAccruals(freeAccrualWhere(f), prisma);
   const warnings: string[] = [];
+  // Э6-2: в недельных/произвольных/внеочередных ведомостях тариф анестезиолога —
+  // предварительный (нижняя ставка). Фактическая ступень определится в месячной.
+  if (f.kind !== 'monthly' && groups.some((g) => g.hasTariff)) {
+    warnings.push('Ставка анестезиолога предварительная (нижняя). Фактическая ступень определится в месячной ведомости.');
+  }
   for (const g of groups) {
     if (g.accruedTotal < 0) warnings.push(`У «${g.fio}» итог по ведомости отрицательный (${g.accruedTotal}) — только корректировки.`);
   }
@@ -114,12 +123,68 @@ async function nextNumber(base: Date, tx: PrismaClientOrTx): Promise<string> {
   return `${prefix}${String(count + 1).padStart(3, '0')}`;
 }
 
+// Корректировка ставки анестезиолога по итогу месяца (Э6-1, ТЗ 4.6): в месячной
+// ведомости фактическое количество операций определяет ступень; на разницу с нижней
+// ставкой заводится отдельное начисление-корректировка.
+async function addAnesthesiaMonthlyCorrections(tx: PrismaClientOrTx, sheetId: number, periodTo: Date | null) {
+  const accruals = await tx.payoutAccrual.findMany({ where: { sheetId, status: 'free', isCorrection: false } });
+  // Отбираем тарифные начисления и группируем по врачу+типу наркоза.
+  const groups = new Map<string, { payeeId: number; type: string; count: number; opId: number }>();
+  for (const a of accruals) {
+    const comp = ((a.components as Array<{ code: string; anesthesiaType?: string }>) ?? []).find((c) => c.code === 'anesthesia_tariff');
+    if (!comp) continue;
+    const type = comp.anesthesiaType ?? 'общий';
+    const key = `${a.payeeId}|${type}`;
+    const g = groups.get(key) ?? { payeeId: a.payeeId, type, count: 0, opId: a.operationId };
+    g.count += 1;
+    groups.set(key, g);
+  }
+  for (const g of groups.values()) {
+    const scheme = await getSchemeForDate(g.payeeId, periodTo ?? new Date(), tx);
+    if (!scheme || scheme.kind !== 'tariff_based') continue;
+    const tariffs: AnesthesiaTariffInput[] = ((scheme as unknown as { tariffs: Array<Record<string, unknown>> }).tariffs ?? []).map((t) => ({
+      anesthesiaType: t.anesthesiaType as string,
+      minCount: Number(t.minCount),
+      maxCount: t.maxCount == null ? null : Number(t.maxCount),
+      amount: Number(t.amount),
+    }));
+    const lowest = lowestAnesthesiaRate(tariffs, g.type);
+    const step = anesthesiaTariffRate(tariffs, g.type, g.count);
+    if (lowest == null || step == null) continue;
+    const total = round2((step - lowest) * g.count);
+    if (Math.abs(total) < 0.005) continue;
+    await tx.payoutAccrual.create({
+      data: {
+        payeeId: g.payeeId,
+        operationId: g.opId,
+        schemeId: scheme.id,
+        schemeVersion: scheme.version,
+        triggerPaymentId: null,
+        eventDate: periodTo ?? new Date(),
+        isCorrection: true,
+        base: 0,
+        paidRatio: 1,
+        sharePct: 1,
+        components: [] as unknown as object,
+        amountFull: total,
+        amount: total,
+        calcTrace: [{ label: `Корректировка ставки по итогу месяца (${g.count} оп., ${g.type})`, value: total }] as unknown as object,
+        status: 'free',
+        sheetId,
+      },
+    });
+  }
+}
+
 // Утверждение: номер, снимок, строки по врачам, начисления → locked. Всё в транзакции.
 export async function approveSheet(sheetId: number, req: Request) {
   return prisma.$transaction(async (tx) => {
     const sheet = await tx.payoutSheet.findUnique({ where: { id: sheetId } });
     if (!sheet) throw notFound('Ведомость не найдена');
     if (sheet.status !== 'draft') throw badRequest('Утвердить можно только черновик.');
+
+    // Месячная ведомость: досчитать корректировки ставок анестезиологов до группировки.
+    if (sheet.kind === 'monthly') await addAnesthesiaMonthlyCorrections(tx, sheetId, sheet.periodTo);
 
     const groups = await groupAccruals({ sheetId, status: 'free' }, tx);
     if (!groups.length) throw badRequest('В ведомости нет начислений для утверждения.');

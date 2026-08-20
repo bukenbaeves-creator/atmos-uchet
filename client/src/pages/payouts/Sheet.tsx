@@ -18,7 +18,7 @@ interface Line {
   paidTotal: number;
   payments: Payment[];
 }
-interface Accrual { id: number; payeeId: number; payee: { fio: string } | null; operationId: number; amount: number; isCorrection: boolean }
+interface Accrual { id: number; payeeId: number; payee: { fio: string } | null; operationId: number; amount: number; isCorrection: boolean; components?: { code: string }[] }
 interface SheetData {
   id: number;
   number: string;
@@ -106,6 +106,12 @@ export function Sheet() {
       />
 
       {err && <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
+
+      {s.kind !== 'monthly' && s.accruals.some((a) => (a.components ?? []).some((c) => c.code === 'anesthesia_tariff')) && (
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Ставка анестезиолога предварительная (нижняя). Фактическая ступень определится в месячной ведомости.
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {s.status === 'draft' && (
