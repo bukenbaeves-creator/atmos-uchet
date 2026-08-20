@@ -23,6 +23,7 @@ import { Receipts } from './pages/Receipts';
 import { Revisions, RevisionDetail } from './pages/Revisions';
 import { ExpenseAnalytics } from './pages/ExpenseAnalytics';
 import { PayoutSettings } from './pages/PayoutSettings';
+import { AccrualTrace } from './pages/payouts/AccrualTrace';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -97,6 +98,14 @@ export function App() {
           element={
             <RequireAdmin>
               <PayoutSettings />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/payouts/trace"
+          element={
+            <RequireAdmin>
+              <AccrualTrace />
             </RequireAdmin>
           }
         />

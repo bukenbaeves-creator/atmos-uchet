@@ -7,12 +7,52 @@ import { requireAdmin } from '../../middleware/rbac.js';
 import { recalcOperation, buildCalcScheme, loadRecalcContext } from '../../services/payout-engine.service.js';
 import { calcPayout, SYSTEM_COMPONENT_META, type CalcScheme, type AcquiringRateInput } from '../../services/payout-calc.service.js';
 import { getSchemeForDate } from '../../services/payout-scheme.service.js';
+import { serialize } from '../../lib/serialize.js';
 
 // Массовый пересчёт начислений и предпросмотр схемы (Э2-4). Только администратор.
 const router = Router();
 router.use(requireAuth, requireAdmin);
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+// ---------- Начисления по операции для экрана «Как посчитано» (Э2-5) ----------
+router.get(
+  '/accruals',
+  asyncHandler(async (req, res) => {
+    const operationId = Number(req.query.operationId);
+    if (!operationId) throw badRequest('Не указан operationId');
+    const rows = await prisma.payoutAccrual.findMany({
+      where: { operationId },
+      include: { payee: { select: { id: true, fio: true } } },
+      orderBy: [{ payeeId: 'asc' }, { eventDate: 'asc' }],
+    });
+    const schemeIds = [...new Set(rows.map((r) => r.schemeId))];
+    const schemes = schemeIds.length
+      ? await prisma.payoutScheme.findMany({ where: { id: { in: schemeIds } }, select: { id: true, name: true, validFrom: true } })
+      : [];
+    const sById = new Map(schemes.map((s) => [s.id, s]));
+    res.json({
+      items: rows.map((r) => {
+        const s = sById.get(r.schemeId);
+        return serialize({
+          id: r.id,
+          payee: r.payee,
+          eventDate: r.eventDate,
+          isCorrection: r.isCorrection,
+          status: r.status,
+          base: r.base,
+          paidRatio: r.paidRatio,
+          sharePct: r.sharePct,
+          amountFull: r.amountFull,
+          amount: r.amount,
+          components: r.components,
+          calcTrace: r.calcTrace,
+          scheme: { name: s?.name ?? null, version: r.schemeVersion, validFrom: s?.validFrom ?? null },
+        });
+      }),
+    });
+  }),
+);
 
 // ---------- Массовый пересчёт ----------
 const recalcSchema = z.object({
