@@ -26,6 +26,7 @@ import { PayoutSettings } from './pages/PayoutSettings';
 import { AccrualTrace } from './pages/payouts/AccrualTrace';
 import { Sheets } from './pages/payouts/Sheets';
 import { Sheet } from './pages/payouts/Sheet';
+import { Registry } from './pages/payouts/Registry';
 import type { ReactNode } from 'react';
 import type { Role } from './lib/auth';
 
@@ -124,6 +125,14 @@ export function App() {
           element={
             <RequireAdmin>
               <Sheet />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/payouts/sheets/:id/registry/:payeeId"
+          element={
+            <RequireAdmin>
+              <Registry />
             </RequireAdmin>
           }
         />

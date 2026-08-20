@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiPatch, ApiError } from '../../api/client';
+import { apiGet, apiPost, apiPatch, payoutSheetExportUrl, ApiError } from '../../api/client';
 import { PageHeader, Spinner, EmptyState, Badge, Modal } from '../../components/ui';
+import { ExportButton } from '../../components/ExportButton';
 
 interface Withholding { type: string; amount: number; comment?: string | null }
 interface Payment { id: number; date: string; amount: number; channel: string; note: string | null }
@@ -98,6 +99,7 @@ export function Sheet() {
         actions={
           <div className="flex items-center gap-2">
             <Badge tone={STATUS[s.status]?.tone ?? 'slate'}>{STATUS[s.status]?.label ?? s.status}</Badge>
+            {s.status !== 'draft' && <ExportButton url={payoutSheetExportUrl(sheetId)} filename={`vedomost-${s.number}.xlsx`} label="Выгрузить в Excel" />}
             <button className="btn-ghost" onClick={() => nav('/payouts/sheets')}>К списку</button>
           </div>
         }
@@ -165,12 +167,15 @@ export function Sheet() {
                     <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(l.paidTotal)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums ${debt > 0 ? 'font-semibold text-rose-600' : 'text-slate-400'}`}>{fmtMoney(debt)}</td>
                     <td className="px-3 py-2">
-                      {s.status === 'approved' && (
-                        <div className="flex justify-end gap-1">
-                          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setWithhLine(l)}>Удержания</button>
-                          <button className="btn-primary px-2 py-1 text-xs" onClick={() => setPayLine(l)}>Выплата</button>
-                        </div>
-                      )}
+                      <div className="flex justify-end gap-1">
+                        <button className="btn-ghost px-2 py-1 text-xs" onClick={() => nav(`/payouts/sheets/${sheetId}/registry/${l.payeeId}`)}>Реестр</button>
+                        {s.status === 'approved' && (
+                          <>
+                            <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setWithhLine(l)}>Удержания</button>
+                            <button className="btn-primary px-2 py-1 text-xs" onClick={() => setPayLine(l)}>Выплата</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
