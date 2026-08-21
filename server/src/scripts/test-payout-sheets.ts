@@ -112,14 +112,15 @@ async function main() {
   }
   check('нельзя повторно включить уже заблокированное начисление', reincludeBlocked);
 
-  console.log('\n=== Т14 — возврат после выплаты → отрицательная корректировка ===');
+  console.log('\n=== Т14 — возврат после утверждения → отрицательная корректировка ===');
   // По операции A (начисление 500 000 заблокировано в ведомости 1) пациент вернул 50%.
+  // Правило клиники: оплата перестала быть 100% → право отпало ЦЕЛИКОМ → корректировка −500 000.
   await prisma.payment.create({ data: { operationId: A, patientId: patient.id, direction: 'refund', date: new Date('2026-08-25T00:00:00Z'), amount: 500000, terminal: 'Наличные' } });
   await recalcOperation(A, prisma);
   const aLocked = await prisma.payoutAccrual.findFirst({ where: { operationId: A, status: 'locked', isCorrection: false } });
   const aNeg = await prisma.payoutAccrual.findFirst({ where: { operationId: A, status: 'free', amount: { lt: 0 } } });
   check('утверждённое начисление A не изменилось (500 000, locked)', aLocked != null && Number(aLocked.amount) === 500000);
-  check('создано отрицательное свободное начисление -250 000', aNeg != null && Number(aNeg.amount) === -250000);
+  check('создана корректировка −500 000 (право отпало целиком)', aNeg != null && Number(aNeg.amount) === -500000);
 
   console.log('\n=== Т18 — остаток долга обнуляется после фиксации выплаты ===');
   const sheetF = await createSheet({ kind: 'custom', from: '2026-08-28', to: '2026-08-28', payeeIds: [payee.id] }, null, req);

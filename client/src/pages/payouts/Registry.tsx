@@ -12,6 +12,7 @@ interface RegRow {
   accrualId: number;
   operationId: number;
   dateOp: string | null;
+  eventDate: string | null; // дата права: операция проведена + оплачена 100%
   opType: string | null;
   patient: string | null;
   base: number;
@@ -26,7 +27,7 @@ interface Registry {
   payeeFio: string | null;
   columns: RegCol[];
   rows: RegRow[];
-  totals: { amount: number; perComponent: Record<string, number> };
+  totals: { amount: number; base: number; perComponent: Record<string, number> };
 }
 
 export function Registry() {
@@ -41,8 +42,9 @@ export function Registry() {
   if (isLoading || !data) return <Spinner />;
 
   const cols: DataTableColumn<RegRow>[] = [
-    { id: 'date', header: 'Дата', accessor: (r) => r.dateOp, format: 'date', sticky: true, width: 100, align: 'center' },
+    { id: 'date', header: 'Дата операции', accessor: (r) => r.dateOp, format: 'date', sticky: true, width: 110, align: 'center' },
     { id: 'patient', header: 'Пациент', accessor: (r) => r.patient ?? (r.isCorrection ? 'корректировка' : ''), sticky: true, width: 200 },
+    { id: 'eventDate', header: 'Дата права (100% оплата)', accessor: (r) => r.eventDate, format: 'date', align: 'center' },
     { id: 'opType', header: 'Вид операции', accessor: (r) => r.opType },
     { id: 'base', header: 'База', accessor: (r) => r.base, align: 'right', format: 'money' },
     ...data.columns.map(
@@ -65,6 +67,7 @@ export function Registry() {
 
   const totals: Record<string, number | string | null> = {
     amount: data.totals.amount,
+    base: data.totals.base,
     ...Object.fromEntries(data.columns.map((c) => [`c_${c.code}`, data.totals.perComponent[c.code]])),
   };
 
@@ -72,7 +75,7 @@ export function Registry() {
     <div>
       <PageHeader
         title={`Реестр · ${data.payeeFio ?? ''}`}
-        subtitle="Операции врача с развёрнутыми компонентами расчёта. Набор колонок — по схеме врача."
+        subtitle="Операции врача с развёрнутыми компонентами расчёта. В ведомость попадают операции, ПРОВЕДЁННЫЕ и оплаченные на 100% — по дате права (что позже: операция или закрывающий платёж)."
         actions={<button className="btn-ghost" onClick={() => nav(`/payouts/sheets/${id}`)}>К ведомости</button>}
       />
       <p className="mb-2 text-xs text-slate-400">Клик по строке — расшифровка расчёта операции («Как посчитано»).</p>

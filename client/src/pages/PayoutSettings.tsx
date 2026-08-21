@@ -333,18 +333,50 @@ function SchemesTab() {
     setShareRows([{ key: '', share: '' }]); setPicked({});
   };
   const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setErr(null); setBusy(true);
+    e.preventDefault(); setErr(null);
+    // Устойчивый разбор чисел: «1%», «1,5», «0,6» → 1 / 1.5 / 0.6. Раньше «1%» молча
+    // превращался в null — комиссия и налог считались нулём.
+    const parseNum = (raw: string): number | null => {
+      const s = String(raw ?? '').replace(/[%\s]/g, '').replace(',', '.');
+      if (s === '') return null;
+      return Number(s);
+    };
+    const items: { componentId: number; stage: string; useOwnValue: boolean; value: number | null }[] = [];
+    for (const [componentId, v] of Object.entries(picked)) {
+      const val = parseNum(v.value);
+      if (val !== null && Number.isNaN(val)) {
+        const compName = comps.data?.items.find((c) => c.id === Number(componentId))?.name ?? componentId;
+        setErr(`Значение компонента «${compName}»: «${v.value}» не число. Введите число, например 1.5 (проценты — без знака %).`);
+        return;
+      }
+      items.push({ componentId: Number(componentId), stage: v.stage, useOwnValue: val !== null, value: val });
+    }
+    const shareParsed = parseNum(form.shareValue);
+    if (form.shareMode === 'constant' && shareParsed !== null && Number.isNaN(shareParsed)) {
+      setErr(`Доля врача: «${form.shareValue}» не число. Введите долю 0…1, например 0.6 (это 60%).`);
+      return;
+    }
+    setBusy(true);
     try {
-      const items = Object.entries(picked).map(([componentId, v]) => ({
-        componentId: Number(componentId), stage: v.stage,
-        useOwnValue: v.value !== '', value: v.value !== '' ? Number(v.value) : null,
-      }));
       const body: Record<string, unknown> = {
         payeeId: Number(form.payeeId), name: form.name, kind: form.kind, shareMode: form.shareMode,
         validFrom: form.validFrom, note: form.note || null, items,
       };
-      if (form.shareMode === 'constant') body.shareValue = form.shareValue ? Number(form.shareValue) : null;
-      else body.shareValues = shareRows.filter((r) => r.key && r.share !== '').map((r) => ({ key: r.key, share: Number(r.share) }));
+      if (form.shareMode === 'constant') body.shareValue = shareParsed;
+      else {
+        const rows: { key: string; share: number }[] = [];
+        for (const r of shareRows) {
+          if (!r.key || r.share === '') continue;
+          const share = parseNum(r.share);
+          if (share === null || Number.isNaN(share)) {
+            setErr(`Доля для «${r.key}»: «${r.share}» не число. Введите долю 0…1, например 0.6.`);
+            setBusy(false);
+            return;
+          }
+          rows.push({ key: r.key, share });
+        }
+        body.shareValues = rows;
+      }
       await apiPost('/payouts/schemes', body);
       qc.invalidateQueries({ queryKey: ['payout-schemes'] });
       setOpen(false); reset();

@@ -75,9 +75,11 @@ async function main() {
   });
 
   async function makeOp(payeeId: number, dateOp: string) {
+    // Право требует базу > 0 и оплату 100% — операция с реальной стоимостью и полной оплатой.
     const op = await prisma.operation.create({
-      data: { patientId: patient.id, dateOp: new Date(dateOp + 'T00:00:00Z'), cost: 0, opType: TAG, zapis: 'КЛИНИКА', participants: { create: [{ payeeId, role: 'anesthesiologist', anesthesiaType: 'общий' }] } },
+      data: { patientId: patient.id, dateOp: new Date(dateOp + 'T00:00:00Z'), cost: 500000, opType: TAG, zapis: 'КЛИНИКА', participants: { create: [{ payeeId, role: 'anesthesiologist', anesthesiaType: 'общий' }] } },
     });
+    await prisma.payment.create({ data: { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date(dateOp + 'T00:00:00Z'), amount: 500000, terminal: 'Наличные' } });
     await recalcOperation(op.id, prisma);
     return op.id;
   }

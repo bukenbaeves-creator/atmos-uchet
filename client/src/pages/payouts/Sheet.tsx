@@ -125,26 +125,37 @@ export function Sheet() {
       </div>
 
       {s.status === 'draft' ? (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="px-3 py-2">Врач</th>
-                <th className="px-3 py-2 text-right">Операций</th>
-                <th className="px-3 py-2 text-right">Начислено</th>
-              </tr>
-            </thead>
-            <tbody>
-              {draftGroups().map((g) => (
-                <tr key={g.payeeId} className="border-b border-slate-50">
-                  <td className="px-3 py-2 font-medium">{g.fio}{g.corr && <span className="ml-1 text-xs text-amber-600">±корр.</span>}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{g.operationsCount}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(g.total)}</td>
+        <>
+          <div className="mb-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
+            Черновик: откройте «Реестр» по каждому врачу и проверьте, какие операции попали и как посчитаны расходы. Утверждайте только после проверки.
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-slate-500">
+                  <th className="px-3 py-2">Врач</th>
+                  <th className="px-3 py-2 text-right">Операций</th>
+                  <th className="px-3 py-2 text-right">Начислено</th>
+                  <th className="px-3 py-2"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {draftGroups().map((g) => (
+                  <tr key={g.payeeId} className="border-b border-slate-50">
+                    <td className="px-3 py-2 font-medium">{g.fio}{g.corr && <span className="ml-1 text-xs text-amber-600">±корр.</span>}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{g.operationsCount}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(g.total)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end">
+                        <button className="btn-ghost px-2 py-1 text-xs" onClick={() => nav(`/payouts/sheets/${sheetId}/registry/${g.payeeId}`)}>Реестр</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
           <table className="w-full text-sm">

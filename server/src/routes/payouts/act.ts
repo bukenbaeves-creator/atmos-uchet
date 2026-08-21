@@ -32,6 +32,7 @@ router.get(
         (r, i) => `<tr>
         <td>${i + 1}</td>
         <td>${dstr(r.dateOp)}</td>
+        <td>${dstr(r.eventDate)}</td>
         <td>${esc(r.patient ?? (r.isCorrection ? 'корректировка' : ''))}</td>
         <td>${esc(r.opType ?? '')}</td>
         <td class="r">${money(r.amount)}</td>
@@ -69,9 +70,9 @@ router.get(
   Операций: <b>${line.operationsCount}</b>.</p>
 
   <table>
-    <thead><tr><th>№</th><th>Дата</th><th>Пациент</th><th>Вид операции</th><th class="r">Начислено, ₸</th></tr></thead>
+    <thead><tr><th>№</th><th>Дата операции</th><th>Оплачено 100%</th><th>Пациент</th><th>Вид операции</th><th class="r">Начислено, ₸</th></tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="4">Итого начислено</td><td class="r">${money(reg.totals.amount)}</td></tr></tfoot>
+    <tfoot><tr><td colspan="5">Итого начислено</td><td class="r">${money(reg.totals.amount)}</td></tr></tfoot>
   </table>
 
   <div class="totals">

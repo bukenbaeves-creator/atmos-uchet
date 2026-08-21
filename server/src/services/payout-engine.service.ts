@@ -18,6 +18,10 @@ import { getSchemeForDate } from './payout-scheme.service.js';
 
 const toNum = (v: unknown): number => (v == null ? 0 : Number(v));
 const toISODate = (d: Date): string => d.toISOString().slice(0, 10);
+const fmtRuDate = (d: Date): string => {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+};
 
 type ComponentRow = { id: number; code: string; name: string; valueSource: string; direction: string; operationField: string | null };
 
@@ -50,11 +54,13 @@ export function buildCalcScheme(dbScheme: Record<string, any>, componentsById: M
 }
 
 // Начисление анестезиолога по операции: одно на операцию, по нижней ставке тарифа.
+// eventDate — дата права (операция проведена + оплачена 100%).
 async function syncTariffAccrual(
   tx: PrismaClientOrTx,
   op: { id: number; dateOp: Date | null },
   part: { payeeId: number; anesthesiaType: string | null },
   scheme: Record<string, any>,
+  eventDate: Date,
 ) {
   const type = part.anesthesiaType ?? 'общий';
   const tariffs: AnesthesiaTariffInput[] = (scheme.tariffs ?? []).map((t: Record<string, any>) => ({
@@ -73,7 +79,7 @@ async function syncTariffAccrual(
     schemeId: scheme.id,
     schemeVersion: scheme.version,
     triggerPaymentId: null,
-    eventDate: op.dateOp!,
+    eventDate,
     isCorrection: false,
     base: lowest,
     paidRatio: 1,
@@ -184,18 +190,41 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   };
   const base = operationInput.cost + operationInput.anesthesiaCost;
 
-  // Обрабатываем участников со схемой типа share_based. Анестезиолог (тариф) считается
-  // на уровне ведомости целиком за период — здесь пропускаем.
+  // ПРАВО НА ВЫПЛАТУ (правило клиники): операция ПРОВЕДЕНА и оплачена на 100%.
+  // Никаких частичных начислений с предоплат: одно начисление на полную сумму.
+  // Дата права = max(дата операции, дата платежа, закрывшего 100%) — поэтому
+  // операция, оплаченная заранее, попадает в ведомость месяца ПРОВЕДЕНИЯ.
+  const paidTotal = payments.reduce((s, p) => s + (p.direction === 'refund' ? -1 : 1) * toNum(p.amount), 0);
+  // База 0 (стоимость не заполнена) — права нет: иначе фиксы схемы дают минусовые начисления.
+  const fullyPaid = base > 0 && paidTotal + 0.005 >= base;
+  let closingDate: Date | null = null; // дата платежа, закрывшего 100%
+  let closingId: number | null = null;
+  if (fullyPaid) {
+    let cum = 0;
+    for (const p of payments) {
+      cum += (p.direction === 'refund' ? -1 : 1) * toNum(p.amount);
+      if (cum + 0.005 >= base) {
+        closingDate = p.date ?? op.dateOp;
+        closingId = p.id;
+        break;
+      }
+    }
+  }
+  const rightDate = closingDate && closingDate.getTime() > op.dateOp.getTime() ? closingDate : op.dateOp;
+
   for (const part of effective) {
    try {
     const scheme = await getSchemeForDate(part.payeeId, op.dateOp, tx);
     if (!scheme) continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
 
-    // Анестезиолог (тариф): одно начисление на операцию по НИЖНЕЙ ставке. Фактическая
-    // ступень и «Корректировка ставки по итогу месяца» определяются при утверждении
-    // месячной ведомости (Э6-1, ТЗ 2.12/4.6).
+    // Анестезиолог (тариф): одно начисление на операцию по НИЖНЕЙ ставке — тоже только
+    // после проведения и полной оплаты. Ступень месяца — при утверждении месячной ведомости.
     if (scheme.kind === 'tariff_based') {
-      await syncTariffAccrual(tx, op, part, scheme as unknown as Record<string, any>);
+      if (!fullyPaid) {
+        await tx.payoutAccrual.deleteMany({ where: { operationId: op.id, payeeId: part.payeeId, status: 'free' } });
+        continue;
+      }
+      await syncTariffAccrual(tx, op, part, scheme as unknown as Record<string, any>, rightDate);
       continue;
     }
 
@@ -204,73 +233,66 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
     const existing = await tx.payoutAccrual.findMany({
       where: { operationId: op.id, payeeId: part.payeeId, isCorrection: false },
     });
-    const byTrigger = new Map<number, (typeof existing)[number]>();
-    for (const e of existing) if (e.triggerPaymentId != null) byTrigger.set(e.triggerPaymentId, e);
 
-    let cumulativePaid = 0;
-    let priorCumulative = 0; // целевая накопленная сумма (по расчёту, независимо от блокировок)
+    let target = 0; // целевая сумма начислений по операции (0, пока право не наступило)
     let lastSharePct = 0;
-    const seenPaymentIds = new Set<number>();
 
-    for (let i = 0; i < payments.length; i++) {
-      const p = payments[i];
-      const sign = p.direction === 'refund' ? -1 : 1;
-      cumulativePaid += sign * toNum(p.amount);
-      seenPaymentIds.add(p.id);
-
-      // Комиссия считается по фактически поступившим платежам → передаём платежи до события.
-      const paymentsSoFar = payments.slice(0, i + 1).map((x) => ({
+    if (fullyPaid) {
+      const allPayments = payments.map((x) => ({
         amount: toNum(x.amount),
         terminal: x.terminal,
         date: x.date ? toISODate(x.date) : operationInput.dateOp,
         direction: (x.direction as 'payment' | 'refund') ?? 'payment',
       }));
-      const calc = calcPayout({ operation: operationInput, payments: paymentsSoFar, scheme: calcScheme, acquiringRates, materialsFact, materialNorm });
-
-      const ratio = base > 0 ? Math.min(1, cumulativePaid / base) : 0;
-      const targetCumulative = round2(calc.amountFull * ratio);
-      const delta = round2(targetCumulative - priorCumulative);
-      priorCumulative = targetCumulative;
+      const calc = calcPayout({ operation: operationInput, payments: allPayments, scheme: calcScheme, acquiringRates, materialsFact, materialNorm });
+      target = round2(calc.amountFull);
       lastSharePct = calc.sharePct;
 
       const data = {
         schemeId: scheme.id,
         schemeVersion: scheme.version,
-        triggerPaymentId: p.id,
-        eventDate: p.date ?? op.dateOp,
+        triggerPaymentId: closingId,
+        eventDate: rightDate,
         isCorrection: false,
         base,
-        paidRatio: ratio,
+        paidRatio: 1,
         sharePct: calc.sharePct,
         components: calc.components as unknown as object,
         amountFull: calc.amountFull,
-        amount: delta,
-        calcTrace: calc.calcTrace as unknown as object,
+        amount: target,
+        calcTrace: [
+          ...calc.calcTrace,
+          { label: `Право на выплату: операция проведена ${fmtRuDate(op.dateOp)}, оплачена 100% ${fmtRuDate(rightDate)}` },
+        ] as unknown as object,
       };
 
-      const ex = byTrigger.get(p.id);
-      if (ex) {
-        // Заблокированные/оплаченные не трогаем никогда (неизменность ведомости).
-        if (ex.status === 'free') await tx.payoutAccrual.update({ where: { id: ex.id }, data });
+      const lockedNonCorr = existing.filter((e) => e.status !== 'free');
+      const freeNonCorr = existing.filter((e) => e.status === 'free');
+      if (lockedNonCorr.length === 0) {
+        // Обычный путь: одно свободное начисление на полную сумму.
+        if (freeNonCorr.length > 0) {
+          await tx.payoutAccrual.update({ where: { id: freeNonCorr[0].id }, data });
+          for (const e of freeNonCorr.slice(1)) await tx.payoutAccrual.delete({ where: { id: e.id } });
+        } else {
+          await tx.payoutAccrual.create({ data: { ...data, payeeId: part.payeeId, operationId: op.id } });
+        }
       } else {
-        await tx.payoutAccrual.create({ data: { ...data, payeeId: part.payeeId, operationId: op.id } });
+        // Номинал уже зафиксирован в ведомости (locked/paid) — свободные дубли убрать,
+        // расхождение с целевой суммой закроет корректировка ниже.
+        for (const e of freeNonCorr) await tx.payoutAccrual.delete({ where: { id: e.id } });
       }
+    } else {
+      // Право не наступило (не проведена / оплата неполная): свободные начисления снять.
+      for (const e of existing) if (e.status === 'free') await tx.payoutAccrual.delete({ where: { id: e.id } });
     }
 
-    // Осиротевшие свободные начисления (платёж удалён) — убрать (только free).
-    for (const e of existing) {
-      if (e.triggerPaymentId != null && !seenPaymentIds.has(e.triggerPaymentId) && e.status === 'free') {
-        await tx.payoutAccrual.delete({ where: { id: e.id } });
-      }
-    }
-
-    // Корректировка (Э3-2, тест Т14): если из-за возврата/правки целевой итог не сходится
-    // с суммой уже существующих начислений (в т.ч. заблокированных в ведомости), заводим
+    // Корректировка: если целевая сумма не сходится с суммой существующих начислений
+    // (например возврат после утверждённой ведомости → право отпало целиком), заводим
     // одно свободное авто-начисление-корректировку на разницу (eventDate = сегодня).
     const after = await tx.payoutAccrual.findMany({ where: { operationId: op.id, payeeId: part.payeeId } });
     const autoCorr = after.find((a) => a.isCorrection && a.triggerPaymentId === null && a.status === 'free');
     const sumExcl = after.filter((a) => a.id !== autoCorr?.id).reduce((s, a) => s + Number(a.amount), 0);
-    const need = round2(priorCumulative - sumExcl);
+    const need = round2(target - sumExcl);
     if (Math.abs(need) >= 0.005) {
       const corrData = {
         schemeId: scheme.id,
@@ -279,10 +301,10 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
         eventDate: new Date(),
         isCorrection: true,
         base,
-        paidRatio: base > 0 ? Math.min(1, cumulativePaid / base) : 0,
+        paidRatio: fullyPaid ? 1 : base > 0 ? Math.min(1, paidTotal / base) : 0,
         sharePct: lastSharePct,
         components: [] as unknown as object,
-        amountFull: priorCumulative,
+        amountFull: target,
         amount: need,
         calcTrace: [{ label: 'Корректировка по итогу пересчёта', value: need }] as unknown as object,
       };

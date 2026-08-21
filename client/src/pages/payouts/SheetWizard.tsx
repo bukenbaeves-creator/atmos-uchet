@@ -66,6 +66,10 @@ export function SheetWizard({ open, onClose, onCreated }: { open: boolean; onClo
           <div>
             <label className="label">Период</label>
             <PeriodSelect value={period} onChange={setPeriod} />
+            <p className="mt-1 text-xs text-slate-400">
+              В ведомость попадают операции, ПРОВЕДЁННЫЕ и оплаченные на 100%, у которых дата права
+              (что позже: дата операции или платёж, закрывший оплату) входит в период.
+            </p>
           </div>
           {err && <p className="text-sm text-red-600">{err}</p>}
           <div className="flex justify-end gap-2">

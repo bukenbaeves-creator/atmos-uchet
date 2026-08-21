@@ -78,36 +78,38 @@ async function main() {
       participants: { create: [{ payeeId: payee.id, role: 'surgeon' }] },
     },
   });
-  await prisma.payment.createMany({
-    data: [
-      { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date('2026-08-05T00:00:00Z'), amount: 400000, terminal: TERMINAL },
-      { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date('2026-09-12T00:00:00Z'), amount: 600000, terminal: TERMINAL },
-    ],
-  });
-
-  // Т12 — первый пересчёт
-  await recalcOperation(op.id, prisma);
   const accr = () =>
     prisma.payoutAccrual.findMany({ where: { operationId: op.id, isCorrection: false }, orderBy: { eventDate: 'asc' } });
-  let rows = await accr();
-  const comp = (r: (typeof rows)[number], code: string) => {
+  const comp = (r: Awaited<ReturnType<typeof accr>>[number], code: string) => {
     const arr = r.components as Array<{ code: string; amount: number }>;
     const c = arr.find((x) => x.code === code);
     return c ? c.amount : NaN;
   };
 
-  console.log('=== Т12 — частичная оплата в разных периодах ===');
-  check('число начислений', rows.length, 2);
-  if (rows.length === 2) {
-    check('событие1 paidRatio', Number(rows[0].paidRatio), 0.4);
-    check('событие1 acquiring', comp(rows[0], 'acquiring'), 6000);
-    check('событие1 amountFull', Number(rows[0].amountFull), 497000);
-    check('событие1 amount', Number(rows[0].amount), 198800);
-    check('событие2 paidRatio', Number(rows[1].paidRatio), 1.0);
-    check('событие2 acquiring', comp(rows[1], 'acquiring'), 15000);
-    check('событие2 amountFull', Number(rows[1].amountFull), 492500);
-    check('событие2 amount', Number(rows[1].amount), 293700);
-    check('итого по операции', Number(rows[0].amount) + Number(rows[1].amount), 492500);
+  // ПРАВИЛО КЛИНИКИ: начисление возникает только после проведения операции и оплаты 100%.
+  console.log('=== Частичная оплата: предоплата 400 000 → начислений НЕТ ===');
+  await prisma.payment.create({
+    data: { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date('2026-08-05T00:00:00Z'), amount: 400000, terminal: TERMINAL },
+  });
+  await recalcOperation(op.id, prisma);
+  let rows = await accr();
+  check('начислений после предоплаты', rows.length, 0);
+
+  console.log('\n=== Доплата 600 000 (12.09) → ОДНО начисление на полную сумму ===');
+  await prisma.payment.create({
+    data: { operationId: op.id, patientId: patient.id, direction: 'payment', date: new Date('2026-09-12T00:00:00Z'), amount: 600000, terminal: TERMINAL },
+  });
+  await recalcOperation(op.id, prisma);
+  rows = await accr();
+  check('число начислений', rows.length, 1);
+  if (rows.length === 1) {
+    check('paidRatio', Number(rows[0].paidRatio), 1);
+    check('acquiring 1.5% от всех платежей', comp(rows[0], 'acquiring'), 15000);
+    check('amountFull', Number(rows[0].amountFull), 492500);
+    check('amount = полная сумма', Number(rows[0].amount), 492500);
+    const ev = rows[0].eventDate.toISOString().slice(0, 10);
+    console.log(`   ${ev === '2026-09-12' ? '✅' : '❌'} дата права = 2026-09-12 (закрывающий платёж позже операции) — ${ev}`);
+    if (ev !== '2026-09-12') failed++;
   }
 
   console.log('\n=== Т17 — идемпотентность (пересчёт ещё дважды) ===');
@@ -115,12 +117,25 @@ async function main() {
   await recalcOperation(op.id, prisma);
   await recalcOperation(op.id, prisma);
   rows = await accr();
-  check('число начислений не изменилось', rows.length, 2);
+  check('число начислений не изменилось', rows.length, 1);
   const same =
     rows.length === before.length &&
     rows.every((r, i) => r.id === before[i].id && Math.abs(Number(r.amount) - before[i].amount) < 0.005);
   console.log(`   ${same ? '✅' : '❌'} суммы и id начислений не изменились`);
   if (!same) failed++;
+
+  console.log('\n=== Возврат 300 000 → право отпало, свободное начисление снято ===');
+  const refund = await prisma.payment.create({
+    data: { operationId: op.id, patientId: patient.id, direction: 'refund', date: new Date('2026-09-20T00:00:00Z'), amount: 300000, terminal: TERMINAL },
+  });
+  await recalcOperation(op.id, prisma);
+  rows = await accr();
+  check('начислений после возврата (free снято)', rows.length, 0);
+  // возврат отменён → право вернулось
+  await prisma.payment.delete({ where: { id: refund.id } });
+  await recalcOperation(op.id, prisma);
+  rows = await accr();
+  check('после отмены возврата начисление вернулось', rows.length, 1);
 
   await cleanup();
 }
@@ -132,7 +147,7 @@ main()
       console.error(`\nПРОВАЛЕНО проверок: ${failed}`);
       process.exit(1);
     }
-    console.log('\nВсе тесты движка (Т12, Т17) пройдены.');
+    console.log('\nВсе тесты движка (право после 100% оплаты, идемпотентность) пройдены.');
     process.exit(0);
   })
   .catch(async (e) => {

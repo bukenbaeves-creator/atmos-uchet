@@ -332,6 +332,7 @@ export async function getSheetRegistry(sheetId: number, payeeId: number) {
       accrualId: a.id,
       operationId: a.operationId,
       dateOp: a.operation?.dateOp ?? null,
+      eventDate: a.eventDate, // дата права: операция проведена + оплачена 100%
       opType: a.operation?.opType ?? null,
       patient: a.operation?.patient?.fio ?? null,
       base: Number(a.base),
@@ -343,7 +344,11 @@ export async function getSheetRegistry(sheetId: number, payeeId: number) {
     };
   });
 
-  const totals: { amount: number; perComponent: Record<string, number> } = { amount: round2(rows.reduce((s, r) => s + r.amount, 0)), perComponent: {} };
+  const totals: { amount: number; base: number; perComponent: Record<string, number> } = {
+    amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
+    base: round2(rows.filter((r) => !r.isCorrection).reduce((s, r) => s + r.base, 0)),
+    perComponent: {},
+  };
   for (const col of columns) totals.perComponent[col.code] = round2(rows.reduce((s, r) => s + (r.components[col.code] ?? 0), 0));
 
   return { payeeId, payeeFio: accruals[0]?.payee?.fio ?? null, columns, rows, totals };
