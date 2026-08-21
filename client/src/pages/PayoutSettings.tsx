@@ -409,27 +409,43 @@ function SchemesTab() {
 
           <div>
             <label className="label">Компоненты вычетов/начислений</label>
-            <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-100 p-2">
+            <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-slate-100 p-2">
               {comps.data?.items.filter((c) => c.isActive).map((c) => {
                 const on = c.id in picked;
+                const vs = c.valueSource;
+                const isPct = vs === 'pct_of_payments' || vs === 'pct_of_base';
+                const noValue = vs === 'warehouse_or_norm';
+                const hint =
+                  vs === 'pct_of_payments' ? 'процент от суммы оплат; пусто = ставка терминала на дату'
+                    : vs === 'pct_of_base' ? 'процент: «до доли» — от базы, «после доли» — от доли врача'
+                    : vs === 'operation_field' ? 'пусто = из карточки операции; сумма = фикс для всех операций врача'
+                    : vs === 'warehouse_or_norm' ? 'факт со склада или норматив (см. вкладку «Нормативы материалов») — берётся больший'
+                    : 'сумма, ₸';
                 return (
-                  <div key={c.id} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={on} onChange={(e) => {
-                      const next = { ...picked };
-                      if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '' };
-                      else delete next[c.id];
-                      setPicked(next);
-                    }} />
-                    <span className="flex-1">{c.name} <code className="text-xs text-slate-400">{c.code}</code></span>
-                    {on && (
-                      <>
-                        <select className="input h-8 w-32 py-0 text-xs" value={picked[c.id].stage} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], stage: e.target.value } })}>
-                          <option value="before_share">до доли</option>
-                          <option value="after_share">после доли</option>
-                        </select>
-                        <input className="input h-8 w-28 py-0 text-xs" placeholder="значение" value={picked[c.id].value} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], value: e.target.value } })} />
-                      </>
-                    )}
+                  <div key={c.id} className="rounded px-1 py-0.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={on} onChange={(e) => {
+                        const next = { ...picked };
+                        if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '' };
+                        else delete next[c.id];
+                        setPicked(next);
+                      }} />
+                      <span className="flex-1">{c.name} <code className="text-xs text-slate-400">{c.code}</code></span>
+                      {on && (
+                        <>
+                          <select className="input h-8 w-32 py-0 text-xs" value={picked[c.id].stage} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], stage: e.target.value } })}>
+                            <option value="before_share">до доли</option>
+                            <option value="after_share">после доли</option>
+                          </select>
+                          {noValue ? (
+                            <span className="w-28 text-center text-xs text-slate-400">склад/норматив</span>
+                          ) : (
+                            <input className="input h-8 w-28 py-0 text-xs" placeholder={isPct ? 'напр. 3 (%)' : 'сумма ₸'} value={picked[c.id].value} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], value: e.target.value } })} />
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {on && <p className="ml-6 text-xs text-slate-400">{hint}</p>}
                   </div>
                 );
               })}

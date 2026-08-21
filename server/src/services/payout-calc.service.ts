@@ -184,7 +184,8 @@ interface Ctx {
 }
 
 // Сумма одного компонента по его источнику значения.
-function componentAmount(c: CalcComponentInput, ctx: Ctx): number {
+// pctBase — база для «pct_of_base»: до доли это база начисления, после доли — сумма доли врача.
+function componentAmount(c: CalcComponentInput, ctx: Ctx, pctBase: number): number {
   switch (c.valueSource) {
     case 'pct_of_payments':
       // useOwnValue → процент из value применяется ко ВСЕЙ сумме платежей (переопределение);
@@ -192,9 +193,11 @@ function componentAmount(c: CalcComponentInput, ctx: Ctx): number {
       if (c.useOwnValue) return ctx.totalPayments * (num(c.value) / 100);
       return ctx.payments.reduce((s, p) => s + p.amount * (resolveAcquiringRate(ctx.rates, p.terminal, p.date) / 100), 0);
     case 'pct_of_base':
-      return ctx.base * (num(c.value) / 100);
+      // «до доли» → % от базы; «после доли» → % от доли врача (pctBase подставляется вызовом).
+      return pctBase * (num(c.value) / 100);
     case 'operation_field':
-      return num((ctx.operation as unknown as Record<string, unknown>)[c.operationField ?? '']);
+      // Вписана сумма в схеме (useOwnValue) → фикс; иначе — из карточки операции.
+      return c.useOwnValue ? num(c.value) : num((ctx.operation as unknown as Record<string, unknown>)[c.operationField ?? '']);
     case 'warehouse_or_norm':
       return ctx.materialsFact ?? ctx.materialNorm ?? 0;
     case 'warehouse_fact':
@@ -229,28 +232,31 @@ export function calcPayout(input: CalcInput): CalcOutput {
     rates: input.acquiringRates,
   };
 
-  const lines: ComponentLine[] = [];
-  for (const c of scheme.components) {
-    if (!c.enabled) continue;
+  // Строка компонента; pctBase — база для процентных вычетов «pct_of_base».
+  const buildLine = (c: CalcComponentInput, pctBase: number): ComponentLine => {
     const label = c.label ?? SYSTEM_COMPONENT_META[c.code]?.label ?? c.code;
     if (c.valueSource === 'warehouse_or_norm') {
       // Материалы: считаем оба способа и берём БОЛЬШИЙ (факт со склада vs норматив).
       const fact = ctx.materialsFact ?? 0;
       const norm = ctx.materialNorm ?? 0;
       const method: 'факт' | 'норматив' = fact >= norm ? 'факт' : 'норматив';
-      lines.push({ code: c.code, label, stage: c.stage, direction: c.direction, amount: Math.max(fact, norm), detail: { fact, norm, method } });
-    } else {
-      lines.push({ code: c.code, label, stage: c.stage, direction: c.direction, amount: componentAmount(c, ctx) });
+      return { code: c.code, label, stage: c.stage, direction: c.direction, amount: Math.max(fact, norm), detail: { fact, norm, method } };
     }
-  }
-  // Вычет уменьшает базу/выплату, начисление — увеличивает.
+    return { code: c.code, label, stage: c.stage, direction: c.direction, amount: componentAmount(c, ctx, pctBase) };
+  };
   const signed = (l: ComponentLine) => (l.direction === 'deduction' ? l.amount : -l.amount);
-  const beforeSum = lines.filter((l) => l.stage === 'before_share').reduce((s, l) => s + signed(l), 0);
-  const afterSum = lines.filter((l) => l.stage === 'after_share').reduce((s, l) => s + signed(l), 0);
 
+  // Два прохода: сначала «до доли» (база процентов = база начисления), затем «после доли»
+  // (база процентов = сумма доли врача) — чтобы налог мог считаться от доли.
+  const beforeLines = scheme.components.filter((c) => c.enabled && c.stage === 'before_share').map((c) => buildLine(c, base));
+  const beforeSum = beforeLines.reduce((s, l) => s + signed(l), 0);
   const baseForShare = base - beforeSum;
   const sharePct = resolveShare(scheme, operation);
-  const amountFull = baseForShare * sharePct - afterSum;
+  const shareAmount = baseForShare * sharePct;
+  const afterLines = scheme.components.filter((c) => c.enabled && c.stage === 'after_share').map((c) => buildLine(c, shareAmount));
+  const afterSum = afterLines.reduce((s, l) => s + signed(l), 0);
+  const amountFull = shareAmount - afterSum;
+  const lines: ComponentLine[] = [...beforeLines, ...afterLines];
 
   // Читаемый след для экрана «Как посчитано».
   const trace: TraceLine[] = [];
