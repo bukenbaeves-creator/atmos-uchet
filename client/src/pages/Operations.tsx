@@ -23,7 +23,7 @@ interface Participant {
   id: number;
   payeeId: number;
   role: 'surgeon' | 'anesthesiologist' | 'assistant' | 'resident';
-  sharePct: number | null;
+  // sharePct сервер в журнал операций НЕ отдаёт (конфиденциально — только модуль выплат)
   anesthesiaType: string | null;
   shiftDay: boolean;
   shiftNight: boolean;

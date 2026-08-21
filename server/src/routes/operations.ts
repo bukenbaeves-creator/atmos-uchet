@@ -132,7 +132,19 @@ const router = makeCrudRouter({
     patient: true,
     consultation: true,
     payments: { where: { deletedAt: null } },
-    participants: { include: { payee: { select: { id: true, fio: true, dictionaryLabel: true, kind: true } } } },
+    // Журнал операций видит и оператор: отдаём только состав участников БЕЗ платёжных
+    // полей (sharePct — деление гонорара — конфиденциально, только в модуле выплат).
+    participants: {
+      select: {
+        id: true,
+        payeeId: true,
+        role: true,
+        anesthesiaType: true,
+        shiftDay: true,
+        shiftNight: true,
+        payee: { select: { id: true, fio: true, dictionaryLabel: true, kind: true } },
+      },
+    },
   },
   orderBy: { dateOp: 'desc' },
   buildWhere: (q) => {
