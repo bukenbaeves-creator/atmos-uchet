@@ -41,7 +41,7 @@ export function Registry() {
   if (isLoading || !data) return <Spinner />;
 
   const cols: DataTableColumn<RegRow>[] = [
-    { id: 'date', header: 'Дата', accessor: (r) => r.dateOp, format: 'date', sticky: true, width: 100 },
+    { id: 'date', header: 'Дата', accessor: (r) => r.dateOp, format: 'date', sticky: true, width: 100, align: 'center' },
     { id: 'patient', header: 'Пациент', accessor: (r) => r.patient ?? (r.isCorrection ? 'корректировка' : ''), sticky: true, width: 200 },
     { id: 'opType', header: 'Вид операции', accessor: (r) => r.opType },
     { id: 'base', header: 'База', accessor: (r) => r.base, align: 'right', format: 'money' },
@@ -57,9 +57,9 @@ export function Registry() {
     ),
     // Если материалы разложены на факт/норматив — показываем, какой метод в расчёте.
     ...(data.columns.some((c) => c.code === 'materials_fact')
-      ? [{ id: 'method', header: 'Метод расхода', accessor: (r: RegRow) => (r.materialsMethod ? (r.materialsMethod === 'факт' ? 'по факту' : 'по нормативу') : '—') } as DataTableColumn<RegRow>]
+      ? [{ id: 'method', header: 'Метод расхода', accessor: (r: RegRow) => (r.materialsMethod ? (r.materialsMethod === 'факт' ? 'по факту' : 'по нормативу') : '—'), align: 'center' } as DataTableColumn<RegRow>]
       : []),
-    { id: 'share', header: 'Доля', accessor: (r) => `${Math.round(r.sharePct * 100)}%`, align: 'right' },
+    { id: 'share', header: 'Доля', accessor: (r) => `${Math.round(r.sharePct * 100)}%`, align: 'center' },
     { id: 'amount', header: 'Начислено', accessor: (r) => r.amount, align: 'right', format: 'money' },
   ];
 

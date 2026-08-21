@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -19,7 +19,7 @@ export interface DataTableColumn<T> {
   header: string;
   group?: string; // группа для двухуровневой шапки
   accessor: (row: T) => number | string | null;
-  align?: 'left' | 'right';
+  align?: 'left' | 'right' | 'center';
   format?: 'money' | 'date' | 'text';
   sticky?: boolean; // закрепить слева
   width?: number;
@@ -100,7 +100,14 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
   }
   const pad = dense ? 'px-2 py-1' : 'px-3 py-2';
   const stickyCls = (id: string, isHeader: boolean) =>
-    stickyLeft.has(id) ? `sticky z-10 ${isHeader ? '' : 'bg-white'}` : '';
+    stickyLeft.has(id) ? `sticky z-10 ${isHeader ? '' : 'bg-inherit'}` : '';
+  const alignCls = (a?: 'left' | 'right' | 'center') =>
+    a === 'right' ? 'text-right tabular-nums' : a === 'center' ? 'text-center' : 'text-left';
+  // Мин. ширина колонки: у закреплённых — своя width, у прочих — чтобы заголовок не сжимался.
+  const colStyle = (m: DataTableColumn<T> | undefined, left?: number): CSSProperties => ({
+    ...(left != null ? { left } : {}),
+    ...(m?.width ? { width: m.width, minWidth: m.width } : { minWidth: 92 }),
+  });
 
   return (
     <div>
@@ -117,25 +124,45 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
 
       <div className="overflow-auto rounded-2xl border border-slate-200" style={{ maxHeight: '70vh' }}>
         <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 z-20 bg-slate-50">
-            {table.getHeaderGroups().map((hg) => (
+          <thead className="sticky top-0 z-20">
+            {table.getHeaderGroups().map((hg, gi) => (
               <tr key={hg.id}>
                 {hg.headers.map((h) => {
                   const m = h.column.columnDef.meta as DataTableColumn<T> | undefined;
-                  const canSort = h.column.getCanSort() && !h.isPlaceholder && h.subHeaders.length === 0;
+                  const grouped = !!m?.group;
+                  const canSort = h.column.getCanSort() && h.subHeaders.length === 0;
                   const dir = h.column.getIsSorted();
-                  return (
+                  const sortArrow = dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '';
+                  const leafTh = (rowSpan?: number) => (
                     <th
                       key={h.id}
-                      colSpan={h.colSpan}
-                      className={`border-b border-slate-200 ${pad} text-left font-semibold text-slate-600 ${m?.align === 'right' ? 'text-right' : ''} ${stickyCls(h.column.id, true)} ${canSort ? 'cursor-pointer select-none' : ''} bg-slate-50`}
-                      style={stickyLeft.has(h.column.id) ? { left: stickyLeft.get(h.column.id) } : undefined}
+                      rowSpan={rowSpan}
+                      className={`border-b border-slate-200 bg-slate-50 ${pad} align-middle text-center text-xs font-semibold text-slate-600 ${stickyCls(h.column.id, true)} ${canSort ? 'cursor-pointer select-none' : ''}`}
+                      style={colStyle(m, stickyLeft.get(h.column.id))}
                       onClick={canSort ? h.column.getToggleSortingHandler() : undefined}
                     >
-                      {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
-                      {dir === 'asc' ? ' ▲' : dir === 'desc' ? ' ▼' : ''}
+                      <span className="inline-flex items-center justify-center gap-1 leading-tight">
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                        {sortArrow && <span className="text-[9px] text-slate-400">{sortArrow}</span>}
+                      </span>
                     </th>
                   );
+                  // Верхняя строка: негруппированные листы — на обе строки; группы — полосой.
+                  if (gi === 0) {
+                    if (h.isPlaceholder) return leafTh(2);
+                    return (
+                      <th
+                        key={h.id}
+                        colSpan={h.colSpan}
+                        className="border-b border-l border-slate-200 bg-slate-100 px-2 py-1 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                      </th>
+                    );
+                  }
+                  // Нижняя строка: только листы, входящие в группу (остальные уже сверху).
+                  if (!grouped) return null;
+                  return leafTh();
                 })}
               </tr>
             ))}
@@ -151,7 +178,7 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
                 return (
                   <tr
                     key={row.id}
-                    className={`border-b border-slate-50 hover:bg-slate-50 ${onRowClick ? 'cursor-pointer' : ''}`}
+                    className={`border-b border-slate-100 bg-white even:bg-slate-50 hover:bg-slate-100 ${onRowClick ? 'cursor-pointer' : ''}`}
                     onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   >
                     {row.getVisibleCells().map((cell, ci) => {
@@ -160,9 +187,9 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
                       return (
                         <td
                           key={cell.id}
-                          className={`${pad} ${m.align === 'right' ? 'text-right tabular-nums' : ''} ${cls} ${stickyCls(cell.column.id, false)}`}
+                          className={`${pad} ${alignCls(m.align)} ${cls} ${stickyCls(cell.column.id, false)}`}
                           style={{
-                            ...(stickyLeft.has(cell.column.id) ? { left: stickyLeft.get(cell.column.id) } : {}),
+                            ...(stickyLeft.has(cell.column.id) ? colStyle(m, stickyLeft.get(cell.column.id)) : {}),
                             ...(ci === 0 && accent ? { borderLeft: `3px solid ${accent}` } : {}),
                           }}
                         >
@@ -176,8 +203,8 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
             )}
           </tbody>
           {totals && (
-            <tfoot className="sticky bottom-0 z-20 bg-slate-100">
-              <tr>
+            <tfoot className="sticky bottom-0 z-20">
+              <tr className="bg-slate-100 font-semibold">
                 {leafCols.map((lc, i) => {
                   const m = lc.columnDef.meta as DataTableColumn<T>;
                   const val = totals[lc.id];
@@ -185,8 +212,8 @@ export function DataTable<T>({ columns, rows, totals, rowAccent, onRowClick, emp
                   return (
                     <td
                       key={lc.id}
-                      className={`border-t border-slate-300 ${pad} font-semibold ${m.align === 'right' ? 'text-right tabular-nums' : ''} ${cls} ${stickyCls(lc.id, false)}`}
-                      style={stickyLeft.has(lc.id) ? { left: stickyLeft.get(lc.id), background: 'inherit' } : undefined}
+                      className={`border-t border-slate-300 bg-slate-100 ${pad} ${alignCls(m.align)} ${cls} ${stickyCls(lc.id, false)}`}
+                      style={stickyLeft.has(lc.id) ? colStyle(m, stickyLeft.get(lc.id)) : {}}
                     >
                       {text}
                     </td>
