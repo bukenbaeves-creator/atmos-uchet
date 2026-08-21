@@ -181,14 +181,14 @@ function AcquiringTab() {
   const qc = useQueryClient();
   const { data, isLoading, isError } = useItems<Acq>('payout-acquiring', '/payouts/rates/acquiring');
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ terminal: '', ratePct: '', validFrom: '', note: '' });
+  const [form, setForm] = useState({ terminal: '', ratePct: '', validFrom: '2020-01-01', note: '' });
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(null); setBusy(true);
     try {
       await apiPost('/payouts/rates/acquiring', { terminal: form.terminal, ratePct: Number(form.ratePct), validFrom: form.validFrom, note: form.note || null });
       qc.invalidateQueries({ queryKey: ['payout-acquiring'] });
-      setOpen(false); setForm({ terminal: '', ratePct: '', validFrom: '', note: '' });
+      setOpen(false); setForm({ terminal: '', ratePct: '', validFrom: '2020-01-01', note: '' });
     } catch (x) { setErr(x instanceof ApiError ? x.message : 'Не удалось сохранить'); } finally { setBusy(false); }
   };
   const columns: Column<Acq>[] = [
@@ -226,7 +226,7 @@ function AnesthesiaTab() {
   const qc = useQueryClient();
   const { data, isLoading, isError } = useItems<Tar>('payout-anesthesia', '/payouts/tariffs/anesthesia');
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ anesthesiaType: '', minCount: '1', maxCount: '', amount: '', validFrom: '' });
+  const [form, setForm] = useState({ anesthesiaType: '', minCount: '1', maxCount: '', amount: '', validFrom: '2020-01-01' });
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(null); setBusy(true);
@@ -236,7 +236,7 @@ function AnesthesiaTab() {
         maxCount: form.maxCount ? Number(form.maxCount) : null, amount: Number(form.amount), validFrom: form.validFrom,
       });
       qc.invalidateQueries({ queryKey: ['payout-anesthesia'] });
-      setOpen(false); setForm({ anesthesiaType: '', minCount: '1', maxCount: '', amount: '', validFrom: '' });
+      setOpen(false); setForm({ anesthesiaType: '', minCount: '1', maxCount: '', amount: '', validFrom: '2020-01-01' });
     } catch (x) { setErr(x instanceof ApiError ? x.message : 'Не удалось сохранить'); } finally { setBusy(false); }
   };
   const columns: Column<Tar>[] = [
@@ -275,14 +275,14 @@ function NormsTab() {
   const qc = useQueryClient();
   const { data, isLoading, isError } = useItems<Norm>('payout-norms', '/payouts/norms');
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ opType: '', amount: '', validFrom: '' });
+  const [form, setForm] = useState({ opType: '', amount: '', validFrom: '2020-01-01' });
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(null); setBusy(true);
     try {
       await apiPost('/payouts/norms', { opType: form.opType, amount: Number(form.amount), validFrom: form.validFrom });
       qc.invalidateQueries({ queryKey: ['payout-norms'] });
-      setOpen(false); setForm({ opType: '', amount: '', validFrom: '' });
+      setOpen(false); setForm({ opType: '', amount: '', validFrom: '2020-01-01' });
     } catch (x) { setErr(x instanceof ApiError ? x.message : 'Не удалось сохранить'); } finally { setBusy(false); }
   };
   const columns: Column<Norm>[] = [
@@ -320,13 +320,13 @@ function SchemesTab() {
   const comps = useItems<Comp>('payout-components', '/payouts/components');
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '', note: '' });
+  const [form, setForm] = useState({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '2020-01-01', note: '' });
   const [shareRows, setShareRows] = useState<{ key: string; share: string }[]>([{ key: '', share: '' }]);
   const [picked, setPicked] = useState<Record<number, { stage: string; value: string }>>({});
 
   const payeeName = (id: number) => payees.data?.items.find((p) => p.id === id)?.fio ?? `#${id}`;
   const reset = () => {
-    setForm({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '', note: '' });
+    setForm({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '2020-01-01', note: '' });
     setShareRows([{ key: '', share: '' }]); setPicked({});
   };
   const submit = async (e: React.FormEvent) => {
@@ -380,7 +380,10 @@ function SchemesTab() {
                 {Object.entries(SCHEME_KIND_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>
-            <div><label className="label">Действует с</label><input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required /></div>
+            <div><label className="label">Действует с</label>
+              <input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required />
+              <p className="mt-1 text-xs text-amber-600">Схема применяется к операциям С ЭТОЙ ДАТЫ. Чтобы посчитать уже проведённые операции — ставьте раннюю дату (по умолчанию 2020-01-01).</p>
+            </div>
           </div>
 
           <div>
