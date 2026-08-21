@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../../api/client';
 import { PageHeader, Spinner, EmptyState, Badge } from '../../components/ui';
@@ -38,6 +38,7 @@ const STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'blue' |
 
 export function AccrualTrace() {
   const [params] = useSearchParams();
+  const nav = useNavigate();
   const paramOp = params.get('operationId');
   const [patientId, setPatientId] = useState<number | null>(null);
   const [opId, setOpId] = useState<number | null>(paramOp ? Number(paramOp) : null);
@@ -54,6 +55,7 @@ export function AccrualTrace() {
       <PageHeader
         title="Как посчитано"
         subtitle="Здесь видно, из чего сложилась выплата врачу по конкретной операции. Обычно сюда переходят по клику из реестра ведомости; можно и выбрать операцию вручную."
+        actions={<button className="btn-ghost" onClick={() => nav(-1)}>← Назад</button>}
       />
       <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
         <div>
