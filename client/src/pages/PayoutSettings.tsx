@@ -208,7 +208,10 @@ function AcquiringTab() {
         <form onSubmit={submit} className="space-y-3">
           <div><label className="label">Терминал</label><DictSelect category="terminal" value={form.terminal} onChange={(v) => setForm({ ...form, terminal: v })} required /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Ставка, %</label><input type="number" step="any" min={0} max={100} className="input" value={form.ratePct} onChange={(e) => setForm({ ...form, ratePct: e.target.value })} required /></div>
+            <div><label className="label">Ставка, %</label>
+              <input type="number" step="any" min={0} max={100} className="input" placeholder="напр. 1.5" value={form.ratePct} onChange={(e) => setForm({ ...form, ratePct: e.target.value })} required />
+              <p className="mt-1 text-xs text-slate-400">Только число, без знака %. Примеры: 1 — это 1%; 1.5 — это 1,5%; 2.3 — это 2,3%.</p>
+            </div>
             <div><label className="label">Действует с</label><input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required /></div>
           </div>
           <div><label className="label">Примечание</label><input className="input" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></div>
