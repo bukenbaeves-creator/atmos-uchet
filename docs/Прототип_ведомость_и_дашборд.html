@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Выплаты врачам — ведомость, реестр, дашборд</title>
+<style>
+:root{--brand:#8F0E44;--brand-l:#fdf2f6;--bg:#f6f7f9;--card:#fff;--line:#e5e7eb;--line2:#f1f3f5;
+      --muted:#6b7280;--ok:#047857;--warn:#b45309;--bad:#b91c1c;--head:#f8fafc}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:#111827;font-size:14px}
+header{background:var(--brand);color:#fff;padding:16px 24px}
+header h1{margin:0;font-size:18px;font-weight:600}
+header p{margin:4px 0 0;opacity:.85;font-size:13px}
+.tabs{display:flex;gap:2px;background:#7a0c3a;padding:0 24px}
+.tabs button{background:transparent;border:none;color:#fff;opacity:.72;padding:11px 16px;font-size:13px;cursor:pointer;font-family:inherit;border-bottom:3px solid transparent}
+.tabs button.on{opacity:1;border-bottom-color:#fff;font-weight:600}
+.wrap{max-width:1340px;margin:0 auto;padding:18px 24px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:18px}
+.card h2{margin:0 0 3px;font-size:15px;font-weight:600}
+.card .hint{color:var(--muted);font-size:12px;margin:0 0 14px}
+
+/* ——— панель периода ——— */
+.periodbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;background:#fff;border:1px solid var(--line);
+           border-radius:10px;padding:12px 16px;margin-bottom:18px}
+.field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin-bottom:4px}
+select,input[type=date],input[type=text]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;background:#fff}
+select{min-width:260px}
+.period-info{font-size:12px;color:var(--muted);margin-left:auto;text-align:right;line-height:1.5}
+.warnbar{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:10px;width:100%}
+
+/* ——— таблицы ——— */
+.tbl-wrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:9px;background:#fff}
+table{width:100%;border-collapse:separate;border-spacing:0}
+th,td{padding:8px 10px;font-size:13px;border-bottom:1px solid var(--line2);white-space:nowrap;background:#fff}
+thead th{position:sticky;background:var(--head);font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+         color:var(--muted);font-weight:600;z-index:3;border-bottom:1px solid var(--line)}
+thead tr:first-child th{top:0;height:30px}
+thead tr:nth-child(2) th{top:30px}
+thead th.grp{text-align:center;border-left:1px solid var(--line);color:#374151;background:#eef1f4}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.zero{color:#cbd5e1}
+td.neg{color:var(--bad)}
+td.accr{background:var(--brand-l);font-weight:600}
+tbody tr:hover td{background:#fafbfc}
+tbody tr:hover td.accr{background:#fbe8f0}
+tbody tr.alt td{background:#fcfcfd}
+tbody tr.alt:hover td{background:#f7f8f9}
+.sticky1{position:sticky;left:0;z-index:2;box-shadow:1px 0 0 var(--line2)}
+.sticky2{position:sticky;z-index:2;box-shadow:1px 0 0 var(--line)}
+thead .sticky1,thead .sticky2{z-index:5}
+tfoot td{position:sticky;bottom:0;background:#f8fafc;font-weight:700;border-top:2px solid #111827;z-index:3}
+tfoot td.sticky1,tfoot td.sticky2{z-index:4;background:#f8fafc}
+tr.click{cursor:pointer}
+.flag{display:inline-block;width:3px;height:16px;border-radius:2px;vertical-align:-3px;margin-right:7px}
+.flag.y{background:#f59e0b}.flag.r{background:#dc2626}.flag.n{background:transparent}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:#111827}
+th .arr{opacity:.45;font-size:9px}
+.compact th,.compact td{padding:4px 8px;font-size:12px}
+
+/* ——— прочее ——— */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)};select{min-width:180px}}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.kpi .val{font-size:21px;font-weight:700;margin-top:6px;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:12px;color:var(--muted);margin-top:3px}
+.bar{height:9px;background:#eef1f4;border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--brand)}
+.chart{display:flex;align-items:flex-end;gap:12px;height:170px;padding-top:8px}
+.chart .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px}
+.chart .stack{width:100%;display:flex;gap:3px;align-items:flex-end;height:140px}
+.chart .b{flex:1;border-radius:3px 3px 0 0}
+.chart .b1{background:var(--brand)}.chart .b2{background:#e3b7c8}
+.chart .lab{font-size:11px;color:var(--muted)}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+.sig{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line2);align-items:flex-start}
+.sig .dot{width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none}
+.sig .d{font-size:12px;color:var(--muted)}
+.tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+.tag.g{background:#ecfdf5;color:var(--ok)}.tag.y{background:#fffbeb;color:var(--warn)}
+.tag.r{background:#fef2f2;color:var(--bad)}.tag.n{background:#f1f5f9;color:var(--muted)}
+.back{background:none;border:none;color:var(--brand);cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-bottom:10px}
+.btn{background:var(--brand);color:#fff;border:none;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit}
+.btn.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+.note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:10px 12px;font-size:12px;margin-top:12px}
+.empty{padding:40px;text-align:center;color:var(--muted);font-size:13px}
+.small{font-size:12px;color:var(--muted)}
+.sum-table td{border-bottom:1px solid var(--line2);white-space:normal}
+.sum-table tr.tot td{font-weight:700;border-top:2px solid #111827;background:#fafafa}
+</style>
+</head>
+<body>
+<header>
+  <h1>Выплаты врачам — ведомость, реестр, дашборд</h1>
+  <p>Прототип на данных, повторяющих ваш файл. Сегодня в прототипе: среда, 19 августа 2026.</p>
+</header>
+<div class="tabs">
+  <button class="on" data-tab="sheet">Ведомость</button>
+  <button data-tab="dash">Дашборд</button>
+  <button data-tab="free">Свободные начисления</button>
+</div>
+<div class="wrap"><div id="view"></div></div>
+
+<script>
+const TODAY = new Date(2026,7,19); // 19.08.2026, среда
+const nf = new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0});
+const fmt = n => nf.format(Math.round(n));
+const money = (n,cls) => n===0 ? '<td class="num zero">—</td>' : `<td class="num ${n<0?'neg':''} ${cls||''}">${fmt(n)}</td>`;
+const dmy = s => { const d=new Date(s); return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear(); };
+const dm  = s => { const d=new Date(s); return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0'); };
+const MN=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const MN2=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+const iso = d => d.toISOString().slice(0,10);
+
+/* ---------- ПЕРИОДЫ: только завершённые, выпадающим списком ---------- */
+function buildPeriods(){
+  const P=[], t=new Date(TODAY);
+  const dow=(t.getDay()+6)%7;                       // 0=пн
+  const thisMon=new Date(t); thisMon.setDate(t.getDate()-dow);
+  for(let i=1;i<=2;i++){
+    const from=new Date(thisMon); from.setDate(thisMon.getDate()-7*i);
+    const to=new Date(from); to.setDate(from.getDate()+6);
+    P.push({id:'w'+i,kind:'weekly',closed:true,
+      label:(i===1?'Прошлая неделя':'Позапрошлая неделя')+` · ${dm(from)}–${dm(to)}`,from,to});
+  }
+  for(let i=1;i<=2;i++){
+    const from=new Date(t.getFullYear(),t.getMonth()-i,1);
+    const to=new Date(t.getFullYear(),t.getMonth()-i+1,0);
+    P.push({id:'m'+i,kind:'monthly',closed:true,
+      label:(i===1?'Прошлый месяц':'Позапрошлый месяц')+` · ${MN2[from.getMonth()]} ${from.getFullYear()}`,from,to});
+  }
+  const q=Math.floor(t.getMonth()/3)-1, qy=q<0?t.getFullYear()-1:t.getFullYear(), qq=(q+4)%4;
+  P.push({id:'q1',kind:'custom',closed:true,label:`Прошлый квартал · ${qq+1} кв. ${qy}`,
+          from:new Date(qy,qq*3,1),to:new Date(qy,qq*3+3,0)});
+  P.push({id:'cw',kind:'weekly',closed:false,label:`Текущая неделя (не закрыта) · ${dm(thisMon)}–${dm(t)}`,from:thisMon,to:t});
+  P.push({id:'cm',kind:'monthly',closed:false,label:`Текущий месяц (не закрыт) · ${MN2[t.getMonth()]} ${t.getFullYear()}`,
+          from:new Date(t.getFullYear(),t.getMonth(),1),to:t});
+  P.push({id:'custom',kind:'custom',closed:true,label:'Произвольный период…',from:null,to:null});
+  return P;
+}
+const PERIODS=buildPeriods();
+let periodId='m1', customFrom='2026-07-01', customTo='2026-07-31';
+function curPeriod(){
+  const p=PERIODS.find(x=>x.id===periodId);
+  if(p.id==='custom') return {...p,from:new Date(customFrom),to:new Date(customTo),label:`Произвольный период · ${dmy(customFrom)}–${dmy(customTo)}`};
+  return p;
+}
+
+/* ---------- СХЕМЫ ВРАЧЕЙ ---------- */
+const RATES={kaspi:1.5,forte:2.3,halyk:2.0,instal:0,cash:0};
+const DOCTORS=[
+ {id:1,name:'Кулесбаев А.',kind:'Хирург',scheme:'60/50 по источнику',
+  cfg:{shareMode:'by_source',doctor:60,clinic:50,acq:{rate:1.5},on:{acq:1,anes:1,impl:0,mat:1,asst:0,tax:0,rent:1,admin:0},rent:10000}},
+ {id:2,name:'Сулейманова В.И.',kind:'Хирург',scheme:'50/50',
+  cfg:{shareMode:'const',share:50,acq:{rate:1.0},on:{acq:1,anes:1,impl:1,mat:1,asst:1,tax:0,rent:0,admin:0}}},
+ {id:3,name:'Бектемиров А.',kind:'Хирург',scheme:'50/50 + бонус админа',
+  cfg:{shareMode:'const',share:50,acq:{rate:1.5},on:{acq:1,anes:1,impl:0,mat:1,asst:1,tax:0,rent:0,admin:1}}},
+ {id:4,name:'Сагадатов Н.',kind:'Приходящий хирург',scheme:'50/50 + бонус админа',
+  cfg:{shareMode:'const',share:50,acq:{rate:1.5},on:{acq:1,anes:1,impl:0,mat:1,asst:1,tax:0,rent:0,admin:1}}},
+ {id:5,name:'Александр (резидент)',kind:'Резидент',scheme:'30%',
+  cfg:{shareMode:'const',share:30,acq:{own:true,rate:1.0},tax:4,on:{acq:1,anes:1,impl:0,mat:1,asst:0,tax:1,rent:0,admin:1}}},
+ {id:6,name:'Кулдашев (анестезиолог)',kind:'Анестезиолог',scheme:'Тариф за операцию, шкала по месяцу',tariff:true}
+];
+const TIERS=[{min:1,max:5,amt:40000},{min:6,max:8,amt:37000},{min:9,max:999,amt:35000}];
+const LOW_TIER=35000; // нижняя ставка — применяется в недельных ведомостях
+
+/* ---------- ОПЕРАЦИИ ---------- */
+const OPS=[
+ // ИЮЛЬ 2026 (прошлый месяц)
+ {id:101,doc:1,date:'2026-07-03',patient:'Куанова Д.',op:'Риносептопластика',src:'ВРАЧ',sum:1900000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-07-03',ch:'kaspi',a:600000},{d:'2026-07-24',ch:'instal',a:1300000}],anesth:6},
+ {id:102,doc:1,date:'2026-07-08',patient:'Шамиль У.',op:'Риносептопластика',src:'ВРАЧ',sum:1400000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-07-08',ch:'kaspi',a:1400000}],anesth:6},
+ {id:103,doc:1,date:'2026-07-20',patient:'Умирзаков Е.',op:'Риносептопластика',src:'КЛИНИКА',sum:1500000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-07-20',ch:'kaspi',a:1500000}],anesth:6},
+ {id:104,doc:1,date:'2026-07-28',patient:'Тохтиева А.',op:'Коррекция носа',src:'КЛИНИКА',sum:700000,anes:250000,mat:50000,impl:0,asst:0,
+  pays:[{d:'2026-07-29',ch:'kaspi',a:700000}],anesth:6},
+ {id:201,doc:2,date:'2026-07-06',patient:'Бимаганбет Р.',op:'Подтяжка лица, ФТЛ',src:'КЛИНИКА',sum:1650000,anes:150000,mat:70000,impl:0,asst:10000,
+  pays:[{d:'2026-07-06',ch:'kaspi',a:1650000}]},
+ {id:202,doc:2,date:'2026-07-13',patient:'Газдиева Л.',op:'Блефаропластика нижняя',src:'КЛИНИКА',sum:250000,anes:0,mat:15000,impl:0,asst:10000,
+  pays:[{d:'2026-07-13',ch:'kaspi',a:250000}]},
+ {id:203,doc:2,date:'2026-07-17',patient:'Дарикулова Ж.',op:'Блефаропластика круговая',src:'ВРАЧ',sum:400000,anes:0,mat:30000,impl:0,asst:5000,
+  pays:[{d:'2026-07-17',ch:'cash',a:400000}]},
+ {id:204,doc:2,date:'2026-07-29',patient:'Ергалиева Л.',op:'Подтяжка лица + ниж. блефаро',src:'КЛИНИКА',sum:1200000,anes:185000,mat:60000,impl:0,asst:10000,
+  pays:[{d:'2026-07-29',ch:'kaspi',a:600000},{d:'2026-08-12',ch:'kaspi',a:600000}]},
+ {id:301,doc:3,date:'2026-07-07',patient:'Такенова С.',op:'Блефаропластика верхняя',src:'КЛИНИКА',sum:200000,anes:0,mat:10000,impl:0,asst:10000,
+  pays:[{d:'2026-07-07',ch:'forte',a:200000}]},
+ {id:302,doc:3,date:'2026-07-15',patient:'Бакиева Д.',op:'Блефаропластика верхняя',src:'КЛИНИКА',sum:200000,anes:0,mat:10000,impl:0,asst:10000,
+  pays:[{d:'2026-07-15',ch:'kaspi',a:200000}]},
+ {id:303,doc:3,date:'2026-07-24',patient:'Нурланова А.',op:'Отопластика',src:'ВРАЧ',sum:300000,anes:0,mat:12000,impl:0,asst:10000,
+  pays:[{d:'2026-07-24',ch:'kaspi',a:300000}],norm:true},
+ {id:401,doc:4,date:'2026-07-09',patient:'Базилова А.',op:'Подтяжка лица',src:'КЛИНИКА',sum:1000000,anes:250000,mat:70000,impl:0,asst:10000,
+  pays:[{d:'2026-07-09',ch:'kaspi',a:1000000}]},
+ {id:402,doc:4,date:'2026-07-22',patient:'Маслова А.',op:'Рино + блефаро',src:'ВРАЧ',sum:1300000,anes:250000,mat:0,impl:0,asst:10000,
+  pays:[{d:'2026-07-22',ch:'kaspi',a:270000},{d:'2026-07-23',ch:'forte',a:900000},{d:'2026-07-23',ch:'cash',a:130000}]},
+ {id:501,doc:5,date:'2026-07-14',patient:'Гульжан С.',op:'Блефаропластика верхняя',src:'ВРАЧ',sum:180000,anes:0,mat:15000,impl:0,asst:0,
+  pays:[{d:'2026-07-14',ch:'kaspi',a:180000}]},
+ {id:502,doc:5,date:'2026-07-21',patient:'Сагидолда Ш.',op:'Коррекция пупка',src:'ВРАЧ',sum:200000,anes:0,mat:15000,impl:0,asst:0,
+  pays:[{d:'2026-07-21',ch:'kaspi',a:200000}]},
+ {id:503,doc:5,date:'2026-07-27',patient:'Данияр А.',op:'Отопластика',src:'ВРАЧ',sum:200000,anes:0,mat:15000,impl:0,asst:0,
+  pays:[{d:'2026-07-27',ch:'kaspi',a:200000}],manual:'расходники изменены вручную: списание не проведено'},
+ // АВГУСТ 2026 — прошлая неделя 10–16.08
+ {id:105,doc:1,date:'2026-08-11',patient:'Бахытжан Т.',op:'Риносептопластика',src:'ВРАЧ',sum:1400000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-08-11',ch:'kaspi',a:1400000}],anesth:8},
+ {id:205,doc:2,date:'2026-08-12',patient:'Райханова К.',op:'Отопластика',src:'КЛИНИКА',sum:250000,anes:0,mat:10000,impl:0,asst:5000,
+  pays:[{d:'2026-08-12',ch:'kaspi',a:250000}]},
+ {id:304,doc:3,date:'2026-08-13',patient:'Сауле Т.',op:'Блефаропластика верхняя',src:'КЛИНИКА',sum:220000,anes:0,mat:10000,impl:0,asst:10000,
+  pays:[{d:'2026-08-14',ch:'kaspi',a:220000}]},
+ {id:504,doc:5,date:'2026-08-14',patient:'Акмарал Ж.',op:'Ушивание мочки',src:'ВРАЧ',sum:25000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-08-14',ch:'kaspi',a:25000}]},
+ // позапрошлая неделя 03–09.08
+ {id:106,doc:1,date:'2026-08-05',patient:'Есимова А.',op:'Риносептопластика',src:'ВРАЧ',sum:1400000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-08-05',ch:'instal',a:1400000}],anesth:8},
+ {id:206,doc:2,date:'2026-08-06',patient:'Берденова Ж.',op:'Блефаропластика верхняя',src:'ВРАЧ',sum:160000,anes:0,mat:10000,impl:0,asst:5000,
+  pays:[{d:'2026-08-06',ch:'cash',a:160000}]},
+ // без схемы
+ {id:601,doc:null,docName:'Ильин К.О.',date:'2026-08-10',patient:'Жанибекова Ж.',op:'Абдоминопластика',src:'КЛИНИКА',sum:900000,
+  anes:200000,mat:55000,impl:0,asst:10000,pays:[{d:'2026-08-10',ch:'kaspi',a:900000}],noscheme:true},
+ // июнь (для квартала)
+ {id:110,doc:1,date:'2026-06-12',patient:'Мильто О.',op:'Риносептопластика',src:'ВРАЧ',sum:1700000,anes:0,mat:0,impl:0,asst:0,
+  pays:[{d:'2026-06-12',ch:'kaspi',a:1700000}],anesth:4},
+ {id:210,doc:2,date:'2026-06-18',patient:'Сертаева М.',op:'Блефаропластика круговая',src:'КЛИНИКА',sum:400000,anes:0,mat:25000,impl:0,asst:10000,
+  pays:[{d:'2026-06-18',ch:'kaspi',a:400000}]}
+];
+
+const COMPS=[{key:'acq',col:'Комиссия банка'},{key:'anes',col:'Наркоз/седация'},{key:'impl',col:'Импланты'},
+             {key:'mat',col:'Расходники'},{key:'asst',col:'Медсестра'},{key:'tax',col:'Налог с операции'}];
+const AFTER=[{key:'rent',col:'Аренда дня'},{key:'admin',col:'Бонус админа'}];
+
+function calcOp(op){
+  const doc=DOCTORS.find(d=>d.id===op.doc); if(!doc||doc.tariff) return null;
+  const c=doc.cfg, paid=op.pays.reduce((s,p)=>s+p.a,0);
+  const byCh=ch=>op.pays.filter(p=>p.ch===ch).reduce((s,p)=>s+p.a,0);
+  const parts={};
+  parts.acq = c.acq.own ? paid*c.acq.rate/100
+            : byCh('kaspi')*c.acq.rate/100 + byCh('forte')*RATES.forte/100 + byCh('halyk')*RATES.halyk/100;
+  parts.anes=op.anes; parts.impl=op.impl; parts.mat=op.mat; parts.asst=op.asst; parts.tax=op.sum*(c.tax||0)/100;
+  const before=COMPS.reduce((s,k)=>s+(c.on[k.key]?(parts[k.key]||0):0),0);
+  const share=c.shareMode==='by_source'?(op.src==='ВРАЧ'?c.doctor:c.clinic):c.share;
+  const baseShare=op.sum-before, afterShare=baseShare*share/100;
+  const rent=c.on.rent?(c.rent||0):0, admin=c.on.admin?(op.src==='КЛИНИКА'?5000:0):0;
+  const full=afterShare-rent-admin;
+  return {doc,parts,before,share,baseShare,afterShare,rent,admin,full,paidTotal:paid};
+}
+
+/* ---------- НАЧИСЛЕНИЯ-СОБЫТИЯ ---------- */
+const ACCRUALS=[];
+OPS.forEach(op=>{
+  const r=calcOp(op); if(!r) return;
+  let cum=0, prevRatio=0;
+  op.pays.forEach(p=>{
+    cum+=p.a;
+    const ratio=Math.min(1,cum/op.sum);
+    const delta=r.full*ratio - r.full*prevRatio;
+    ACCRUALS.push({op,r,eventDate:p.d,payAmount:p.a,ratio,amount:delta,doc:r.doc.id,partial:ratio<1});
+    prevRatio=ratio;
+  });
+});
+// анестезиолог: одно начисление на операцию, дата события = дата полной оплаты
+OPS.filter(o=>o.anesth).forEach(op=>{
+  const last=op.pays[op.pays.length-1];
+  ACCRUALS.push({op,r:null,eventDate:last.d,amount:LOW_TIER,doc:6,tariff:true,anesthType:'общий'});
+});
+const PAID_OUT={1:8000000,2:1500000,3:250000,4:900000,5:100000,6:150000};
+
+function inPeriod(dateStr,p){ const d=new Date(dateStr); return d>=p.from && d<=p.to; }
+function periodAccruals(){ const p=curPeriod(); return ACCRUALS.filter(a=>inPeriod(a.eventDate,p)); }
+
+// фактическая ступень тарифа за календарный месяц периода
+function tierCorrection(p){
+  if(p.kind!=='monthly') return null;
+  const cnt=OPS.filter(o=>o.anesth && new Date(o.date).getMonth()===p.from.getMonth()
+                          && new Date(o.date).getFullYear()===p.from.getFullYear()).length;
+  if(!cnt) return null;
+  const tier=TIERS.find(t=>cnt>=t.min&&cnt<=t.max);
+  return {count:cnt,tier:tier.amt,delta:(tier.amt-LOW_TIER)*cnt};
+}
+
+function docTotals(){
+  const A=periodAccruals(), p=curPeriod(), corr=tierCorrection(p);
+  return DOCTORS.map(d=>{
+    const rows=A.filter(a=>a.doc===d.id);
+    let accrued=rows.reduce((s,a)=>s+a.amount,0);
+    let correction=0;
+    if(d.tariff && corr && rows.length){ correction=corr.delta; accrued+=correction; }
+    const ops=[...new Set(rows.map(a=>a.op.id))].length;
+    const revenue=[...new Set(rows.map(a=>a.op))].reduce((s,o)=>s+o.sum,0);
+    const direct=[...new Set(rows.map(a=>a.op))].reduce((s,o)=>{
+      const r=calcOp(o); return s+(r?r.parts.acq:0)+o.anes+o.mat+o.impl+o.asst;},0);
+    const paidOut=Math.min(PAID_OUT[d.id]||0,accrued);
+    return {d,count:ops,revenue,accrued,correction,paidOut,debt:accrued-paidOut,direct,
+            clinic:revenue-accrued-direct,avg:ops?accrued/ops:0,sharePct:revenue?accrued/revenue*100:0,rows};
+  }).filter(t=>t.rows.length);
+}
+
+/* ---------- РЕНДЕР ---------- */
+let view='sheet', openDoc=null, compact=false, sortKey='debt', sortDir=-1, search='';
+
+function periodBar(){
+  const p=curPeriod(), A=periodAccruals();
+  return `<div class="periodbar">
+    <div class="field"><label>Период расчёта</label>
+      <select id="periodSel">${PERIODS.map(x=>`<option value="${x.id}" ${x.id===periodId?'selected':''}>${x.label}</option>`).join('')}</select>
+    </div>
+    ${periodId==='custom'?`
+      <div class="field"><label>с</label><input type="date" id="cf" value="${customFrom}"></div>
+      <div class="field"><label>по</label><input type="date" id="ct" value="${customTo}"></div>`:''}
+    <div class="field"><label>Плотность таблицы</label>
+      <select id="dens"><option value="0" ${!compact?'selected':''}>Обычная</option><option value="1" ${compact?'selected':''}>Компактная</option></select></div>
+    <div class="period-info">
+      Отбор по дате поступления денег<br>
+      ${p.from?`${dmy(iso(p.from))} — ${dmy(iso(p.to))}`:''} · начислений: ${A.length}
+    </div>
+    ${!p.closed?`<div class="warnbar">Период ещё не закрыт: до конца ${p.kind==='weekly'?'недели':'месяца'} суммы могут измениться. Для выплаты выбирайте завершённый период.</div>`:''}
+  </div>`;
+}
+
+function bindCommon(){
+  const s=document.getElementById('periodSel');
+  if(s) s.onchange=e=>{periodId=e.target.value;openDoc=null;render();};
+  const cf=document.getElementById('cf'), ct=document.getElementById('ct');
+  if(cf) cf.onchange=e=>{customFrom=e.target.value;render();};
+  if(ct) ct.onchange=e=>{customTo=e.target.value;render();};
+  const d=document.getElementById('dens');
+  if(d) d.onchange=e=>{compact=e.target.value==='1';render();};
+  document.querySelectorAll('[data-doc]').forEach(tr=>tr.onclick=()=>{openDoc=+tr.dataset.doc;render();});
+  document.querySelectorAll('[data-sort]').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.sort; if(sortKey===k) sortDir*=-1; else {sortKey=k;sortDir=-1;} render();});
+  const q=document.getElementById('q');
+  if(q){ q.oninput=e=>{search=e.target.value; render(); const n=document.getElementById('q'); if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length);} }; }
+}
+
+function render(){
+  const el=document.getElementById('view');
+  if(view==='sheet') el.innerHTML = periodBar() + (openDoc? registryHTML(openDoc) : sheetHTML());
+  else if(view==='dash') el.innerHTML = periodBar() + dashHTML();
+  else el.innerHTML = periodBar() + freeHTML();
+  bindCommon();
+}
+
+function arrow(k){ return sortKey===k? `<span class="arr">${sortDir>0?'▲':'▼'}</span>`:'<span class="arr">↕</span>'; }
+
+function sheetHTML(){
+  const p=curPeriod(), T=docTotals();
+  if(!T.length) return `<div class="card"><div class="empty">За выбранный период начислений нет.<br>Выберите другой период в списке выше.</div></div>`;
+  const S=[...T].sort((a,b)=>(a[sortKey]>b[sortKey]?1:-1)*sortDir);
+  const sum=f=>T.reduce((s,t)=>s+f(t),0);
+  const corr=tierCorrection(p);
+  return `
+  <div class="card">
+    <h2>Ведомость ВВ-2026-${String(p.from.getMonth()+1).padStart(2,'0')}-001 · ${p.label.split(' · ')[1]||''}</h2>
+    <p class="hint">Тип: ${({weekly:'недельная',monthly:'месячная',custom:'произвольный период'})[p.kind]} · статус: черновик · сортировка по клику на заголовок</p>
+    <div class="toolbar">
+      <button class="btn ghost">Выборочная ведомость…</button>
+      <button class="btn ghost">Выгрузить в Excel</button>
+      <span style="flex:1"></span>
+      <button class="btn">Утвердить ведомость</button>
+    </div>
+    <div class="tbl-wrap ${compact?'compact':''}">
+    <table>
+      <thead>
+        <tr>
+          <th class="sticky1" rowspan="2" style="min-width:200px">Врач</th>
+          <th class="grp" colspan="2">Объём</th>
+          <th class="grp" colspan="3">Деньги</th>
+          <th rowspan="2" style="min-width:150px">Проверки</th>
+        </tr>
+        <tr>
+          <th class="num sortable" data-sort="count">Операций ${arrow('count')}</th>
+          <th class="num sortable" data-sort="revenue">Сумма операций ${arrow('revenue')}</th>
+          <th class="num sortable" data-sort="accrued">Начислено ${arrow('accrued')}</th>
+          <th class="num sortable" data-sort="paidOut">Выплачено ${arrow('paidOut')}</th>
+          <th class="num sortable" data-sort="debt">Остаток ${arrow('debt')}</th>
+        </tr>
+      </thead>
+      <tbody>
+      ${S.map((t,i)=>`<tr class="click ${i%2?'alt':''}" data-doc="${t.d.id}">
+        <td class="sticky1"><span class="flag ${flagLvl(t)}"></span><b>${t.d.name}</b>
+            <div class="small" style="padding-left:10px">${t.d.kind} · ${t.d.scheme}</div></td>
+        <td class="num">${t.count}</td>
+        ${money(t.revenue)}
+        ${money(t.accrued,'accr')}
+        ${money(t.paidOut)}
+        ${money(t.debt)}
+        <td>${flagsFor(t)}</td>
+      </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="sticky1">Итого · ${T.length} врачей</td>
+          <td class="num">${sum(t=>t.count)}</td>
+          ${money(sum(t=>t.revenue))}${money(sum(t=>t.accrued),'accr')}${money(sum(t=>t.paidOut))}${money(sum(t=>t.debt))}
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+    ${corr?`<div class="note"><b>Анестезиолог:</b> в периоде ${corr.count} операций → фактическая ставка ${fmt(corr.tier)} ₸.
+      В недельных ведомостях начислялось по нижней ставке ${fmt(LOW_TIER)} ₸, здесь добавлена корректировка ${fmt(corr.delta)} ₸.</div>`:''}
+    ${p.kind==='weekly'?`<div class="note"><b>Анестезиолог считается по нижней ставке ${fmt(LOW_TIER)} ₸ за операцию.</b>
+      Фактическая ступень шкалы станет известна в конце месяца — разница будет доначислена в месячной ведомости.</div>`:''}
+    <div class="note">Операция «Жанибекова Ж.» (Ильин К.О., 10.08) в ведомость не попала: у врача нет схемы выплаты. Смотрите блок «Сигналы» на дашборде.</div>
+  </div>`;
+}
+function flagLvl(t){
+  if(t.rows.some(a=>a.op.manual)) return 'r';
+  if(t.rows.some(a=>a.op.norm||a.partial)) return 'y';
+  return 'n';
+}
+function flagsFor(t){
+  const f=[];
+  if(t.rows.some(a=>a.partial)) f.push('<span class="tag y">частичная оплата</span>');
+  if(t.rows.some(a=>a.op.norm)) f.push('<span class="tag y">норматив</span>');
+  if(t.rows.some(a=>a.op.manual)) f.push('<span class="tag r">ручная правка</span>');
+  if(t.correction) f.push('<span class="tag n">корректировка ставки</span>');
+  if(!f.length) f.push('<span class="tag g">без замечаний</span>');
+  return f.join(' ');
+}
+
+function registryHTML(id){
+  const d=DOCTORS.find(x=>x.id===id), p=curPeriod();
+  const all=periodAccruals().filter(a=>a.doc===id);
+  const rows=search? all.filter(a=>a.op.patient.toLowerCase().includes(search.toLowerCase())):all;
+  const corr=d.tariff?tierCorrection(p):null;
+  const head=`<button class="back" onclick="openDoc=null;render()">← к ведомости</button>`;
+
+  if(d.tariff){
+    const total=rows.reduce((s,a)=>s+a.amount,0)+(corr?corr.delta:0);
+    return head+`<div class="card">
+      <h2>Реестр — ${d.name}</h2>
+      <p class="hint">Схема «${d.scheme}» · ${p.label}</p>
+      <div class="tbl-wrap ${compact?'compact':''}"><table>
+        <thead><tr><th class="sticky1">Дата операции</th><th>Пациент</th><th>Вид операции</th><th>Тип наркоза</th>
+          <th class="num">Ставка</th><th class="num">Начислено</th><th>Примечание</th></tr></thead>
+        <tbody>${rows.map((a,i)=>`<tr class="${i%2?'alt':''}"><td class="sticky1">${dmy(a.op.date)}</td><td>${a.op.patient}</td>
+          <td>${a.op.op}</td><td>${a.anesthType}</td>${money(LOW_TIER)}${money(a.amount,'accr')}
+          <td class="small">нижняя ставка, ступень уточняется по итогу месяца</td></tr>`).join('')}
+          ${corr?`<tr><td class="sticky1">${dmy(iso(p.to))}</td><td colspan="3">Корректировка ставки по итогу месяца (${corr.count} операций → ${fmt(corr.tier)} ₸)</td>
+            ${money(corr.tier-LOW_TIER)}${money(corr.delta,'accr')}<td class="small">доначисление разницы</td></tr>`:''}
+        </tbody>
+        <tfoot><tr><td class="sticky1">Итого</td><td colspan="4">операций: ${rows.length}</td>${money(total,'accr')}<td></td></tr></tfoot>
+      </table></div>
+    </div>`;
+  }
+
+  const c=d.cfg, cols=COMPS.filter(k=>c.on[k.key]), after=AFTER.filter(k=>c.on[k.key]);
+  const S=rows.reduce((s,a)=>s+a.amount,0);
+  const sum=f=>rows.reduce((s,a)=>s+f(a),0);
+  const wh = id===1? [{t:'Удержание 3% (счёт ИП)',v:S*0.03}] : id===5? [] : [{t:'ИПН и социальные платежи',v:Math.round(S*0.12)}];
+  const whSum=wh.reduce((s,w)=>s+w.v,0), paidOut=Math.min(PAID_OUT[id]||0,S);
+  const L1=200; // ширина колонки «Пациент» для sticky
+  return head+`
+  <div class="card">
+    <h2>Реестр — ${d.name}</h2>
+    <p class="hint">Схема «${d.scheme}» · ${p.label} · колонки вычетов показаны только те, что включены в схеме этого врача</p>
+    <div class="toolbar">
+      <input type="text" id="q" placeholder="Поиск по пациенту" value="${search}" style="min-width:220px">
+      <span class="small">строк: ${rows.length}${search?` из ${all.length}`:''}</span>
+      <span style="flex:1"></span>
+      <button class="btn ghost">Выгрузить в Excel</button><button class="btn ghost">Печать АВР</button>
+    </div>
+    ${rows.length?`
+    <div class="tbl-wrap ${compact?'compact':''}"><table>
+      <thead>
+        <tr>
+          <th class="sticky1" rowspan="2" style="min-width:92px">Дата</th>
+          <th class="sticky2" rowspan="2" style="left:92px;min-width:${L1}px">Пациент</th>
+          <th class="grp" colspan="2">Операция</th>
+          <th class="grp" colspan="2">Деньги</th>
+          <th class="grp" colspan="${cols.length}">Вычеты до доли</th>
+          <th class="grp" colspan="2">Доля врача</th>
+          ${after.length?`<th class="grp" colspan="${after.length}">После доли</th>`:''}
+          <th class="grp" rowspan="2">Начислено</th>
+          <th rowspan="2" style="min-width:180px">Примечание</th>
+        </tr>
+        <tr>
+          <th>Вид операции</th><th>Источник</th>
+          <th class="num">Сумма операции</th><th class="num">Оплата в периоде</th>
+          ${cols.map(k=>`<th class="num">${k.col}</th>`).join('')}
+          <th class="num">База для доли</th><th class="num">Доля</th>
+          ${after.map(k=>`<th class="num">${k.col}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+      ${rows.map((a,i)=>`<tr class="${i%2?'alt':''}">
+        <td class="sticky1"><span class="flag ${a.op.manual?'r':(a.op.norm||a.partial?'y':'n')}"></span>${dmy(a.op.date)}</td>
+        <td class="sticky2" style="left:92px">${a.op.patient}</td>
+        <td>${a.op.op}</td><td>${a.op.src}</td>
+        ${money(a.op.sum)}${money(a.payAmount)}
+        ${cols.map(k=>money(a.r.parts[k.key]||0)).join('')}
+        ${money(a.r.baseShare)}<td class="num">${a.r.share}%</td>
+        ${after.map(k=>money(k.key==='rent'?a.r.rent:a.r.admin)).join('')}
+        ${money(a.amount,'accr')}
+        <td class="small">${a.op.manual?'<span class="tag r">ручная правка</span> '+a.op.manual
+          :(a.op.norm?'<span class="tag y">норматив</span> списания не проведены'
+          :(a.partial?`<span class="tag y">${(a.ratio*100).toFixed(0)}% оплаты</span> доначисление после доплаты`:''))}</td>
+      </tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td class="sticky1">Итого</td><td class="sticky2" style="left:92px">операций: ${rows.length}</td>
+        <td></td><td></td>
+        ${money(sum(a=>a.op.sum))}${money(sum(a=>a.payAmount))}
+        ${cols.map(k=>money(sum(a=>a.r.parts[k.key]||0))).join('')}
+        ${money(sum(a=>a.r.baseShare))}<td></td>
+        ${after.map(k=>money(sum(a=>k.key==='rent'?a.r.rent:a.r.admin))).join('')}
+        ${money(S,'accr')}<td></td>
+      </tr></tfoot>
+    </table></div>`:`<div class="empty">Ничего не найдено</div>`}
+  </div>
+
+  <div class="card">
+    <h2>К выплате</h2>
+    <table class="sum-table">
+      <tr><td>Начислено по реестру</td><td class="num">${fmt(S)}</td></tr>
+      ${wh.map(w=>`<tr><td>− ${w.t} <span class="small">(вводит бухгалтер)</span></td><td class="num neg">−${fmt(w.v)}</td></tr>`).join('')}
+      <tr class="tot"><td>К выплате</td><td class="num">${fmt(S-whSum)}</td></tr>
+      <tr><td>Выплачено</td><td class="num">${fmt(paidOut)}</td></tr>
+      <tr class="tot"><td>Остаток к выплате</td><td class="num">${fmt(S-whSum-paidOut)}</td></tr>
+    </table>
+    <div class="toolbar" style="margin-top:14px"><button class="btn">Зафиксировать выплату</button></div>
+  </div>`;
+}
+
+function dashHTML(){
+  const T=docTotals(); const p=curPeriod();
+  if(!T.length) return `<div class="card"><div class="empty">За выбранный период данных нет.</div></div>`;
+  const acc=T.reduce((s,t)=>s+t.accrued,0), paid=T.reduce((s,t)=>s+t.paidOut,0), rev=T.reduce((s,t)=>s+t.revenue,0);
+  const maxShare=Math.max(...T.map(t=>t.sharePct));
+  const trend=[{m:'мар',a:6.1,p:5.8},{m:'апр',a:7.4,p:7.0},{m:'май',a:6.8,p:6.9},{m:'июн',a:8.2,p:7.1},{m:'июл',a:acc/1e6,p:paid/1e6},{m:'авг',a:2.4,p:1.2}];
+  const mx=Math.max(...trend.map(t=>Math.max(t.a,t.p)));
+  const S=[...T].sort((a,b)=>b.debt-a.debt);
+  return `
+  <div class="kpis">
+    <div class="kpi"><div class="lbl">Начислено</div><div class="val">${fmt(acc)} ₸</div><div class="sub">${T.reduce((s,t)=>s+t.count,0)} операций · ${T.length} врачей</div></div>
+    <div class="kpi"><div class="lbl">Выплачено</div><div class="val">${fmt(paid)} ₸</div><div class="sub">${(paid/acc*100).toFixed(0)}% от начисленного</div></div>
+    <div class="kpi"><div class="lbl">Долг перед врачами</div><div class="val" style="color:var(--bad)">${fmt(acc-paid)} ₸</div><div class="sub">на конец периода</div></div>
+    <div class="kpi"><div class="lbl">Доля выплат в выручке</div><div class="val">${(acc/rev*100).toFixed(1)}%</div><div class="sub">выручка ${fmt(rev)} ₸</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Кто сколько заработал и сколько мы должны</h2>
+    <p class="hint">${p.label}. Клик по строке — реестр врача.</p>
+    <div class="tbl-wrap ${compact?'compact':''}"><table>
+      <thead><tr>
+        <th class="sticky1" style="min-width:200px">Врач</th><th class="num">Операций</th><th class="num">Сумма операций</th>
+        <th class="num">Начислено</th><th class="num">Выплачено</th><th class="num">Остаток долга</th><th class="num">Средняя выплата</th>
+      </tr></thead>
+      <tbody>${S.map((t,i)=>`<tr class="click ${i%2?'alt':''}" data-doc="${t.d.id}">
+        <td class="sticky1"><b>${t.d.name}</b><div class="small">${t.d.kind}</div></td>
+        <td class="num">${t.count}</td>${money(t.revenue)}${money(t.accrued,'accr')}${money(t.paidOut)}
+        <td class="num" style="color:${t.debt>0?'var(--bad)':'var(--ok)'};font-weight:600">${fmt(t.debt)}</td>
+        ${money(t.avg)}</tr>`).join('')}</tbody>
+      <tfoot><tr><td class="sticky1">Итого</td><td class="num">${T.reduce((s,t)=>s+t.count,0)}</td>
+        ${money(rev)}${money(acc,'accr')}${money(paid)}${money(acc-paid)}<td></td></tr></tfoot>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Доля выплат в выручке врача</h2>
+    <p class="hint">Сколько процентов от суммы операций уходит врачу и сколько остаётся клинике после прямых расходов (материалы, наркоз, комиссия банка). Это не прибыль: аренда, зарплаты и налоги клиники сюда не входят.</p>
+    <div class="tbl-wrap ${compact?'compact':''}"><table>
+      <thead><tr><th class="sticky1" style="min-width:200px">Врач</th><th style="width:34%">Доля выплат</th>
+        <th class="num">Начислено врачу</th><th class="num">Прямые расходы</th><th class="num">Остаётся клинике</th></tr></thead>
+      <tbody>${[...T].sort((a,b)=>b.sharePct-a.sharePct).map((t,i)=>`<tr class="${i%2?'alt':''}">
+        <td class="sticky1">${t.d.name}</td>
+        <td><div class="bar"><i style="width:${(t.sharePct/maxShare*100).toFixed(0)}%"></i></div><div class="small">${t.sharePct.toFixed(1)}%</div></td>
+        ${money(t.accrued)}${money(t.direct)}
+        <td class="num" style="color:${t.clinic<0?'var(--bad)':'inherit'}">${fmt(t.clinic)}</td></tr>`).join('')}</tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Динамика по месяцам, млн ₸</h2>
+    <div class="chart">${trend.map(t=>`<div class="col"><div class="stack">
+      <div class="b b1" style="height:${(t.a/mx*100).toFixed(0)}%" title="начислено ${t.a.toFixed(1)} млн"></div>
+      <div class="b b2" style="height:${(t.p/mx*100).toFixed(0)}%" title="выплачено ${t.p.toFixed(1)} млн"></div>
+    </div><div class="lab">${t.m}</div></div>`).join('')}</div>
+    <div class="legend"><span><i style="background:var(--brand)"></i>начислено</span><span><i style="background:#e3b7c8"></i>выплачено</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Сигналы и проблемы</h2>
+    <p class="hint">В приложении каждый пункт кликабелен и ведёт к записи.</p>
+    ${sig('r','Операция без схемы выплаты','Жанибекова Ж. · Ильин К.О. · 10.08.2026 · 900 000 ₸ — врач не заведён в справочнике получателей, начисление не создано')}
+    ${sig('r','Начисление с ручной корректировкой','Данияр А. · резидент Александр · 27.07.2026 — расходники изменены вручную, проверить обоснование')}
+    ${sig('y','Расчёт по нормативу вместо факта склада','Нурланова А. · Бектемиров А. · 24.07.2026 — списания не проведены, взят норматив 12 000 ₸')}
+    ${sig('y','Неоплаченный остаток по операции','Ергалиева Л. · Сулейманова В.И. · оплачено 600 000 из 1 200 000, доплата 12.08 — доначисление ушло в августовскую ведомость')}
+    ${sig('y','Анестезиолог: ставка предварительная','Недельные ведомости августа посчитаны по нижней ставке 35 000 ₸ — корректировка появится в месячной ведомости')}
+    ${sig('n','Неподписанные АВР','2 акта за июнь — Кулесбаев А., Сагадатов Н.')}
+  </div>`;
+}
+function sig(l,t,d){const c={r:'var(--bad)',y:'var(--warn)',n:'var(--muted)'}[l];
+  return `<div class="sig"><div class="dot" style="background:${c}"></div><div><div><b>${t}</b></div><div class="d">${d}</div></div></div>`;}
+
+function freeHTML(){
+  const p=curPeriod(), A=periodAccruals();
+  return `<div class="card">
+    <h2>Свободные начисления</h2>
+    <p class="hint">Право на выплату наступило (деньги поступили), в ведомость ещё не включены. Отсюда собирается любая ведомость.</p>
+    ${A.length?`<div class="tbl-wrap ${compact?'compact':''}"><table>
+      <thead><tr><th class="sticky1" style="min-width:110px">Дата события</th><th style="min-width:190px">Врач</th><th>Пациент</th>
+        <th>Основание</th><th class="num">Оплата</th><th class="num">Начислено</th><th>Статус</th></tr></thead>
+      <tbody>${A.slice().sort((a,b)=>a.eventDate<b.eventDate?-1:1).map((a,i)=>`<tr class="${i%2?'alt':''}">
+        <td class="sticky1">${dmy(a.eventDate)}</td><td>${DOCTORS.find(d=>d.id===a.doc).name}</td><td>${a.op.patient}</td>
+        <td class="small">${a.tariff?'тариф за операцию '+dmy(a.op.date):'оплата по операции '+dmy(a.op.date)+(a.partial?' (частичная)':'')}</td>
+        ${money(a.payAmount||0)}${money(a.amount,'accr')}
+        <td><span class="tag g">свободное</span></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td class="sticky1">Итого</td><td colspan="4">начислений: ${A.length}</td>
+        ${money(A.reduce((s,a)=>s+a.amount,0),'accr')}<td></td></tr></tfoot>
+    </table></div>`:`<div class="empty">За выбранный период свободных начислений нет.</div>`}
+    <div class="note">Начисление уходит в ведомость только один раз: после утверждения оно получает номер ведомости и исчезает из этого списка. Это техническая гарантия того, что за одну операцию нельзя заплатить дважды.</div>
+  </div>`;
+}
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); view=b.dataset.tab; openDoc=null; search=''; render();});
+render();
+</script>
+</body>
+</html>

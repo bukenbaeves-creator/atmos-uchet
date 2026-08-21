@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Конструктор расчёта выплат — ATMOS</title>
+<style>
+:root{--brand:#8F0E44;--bg:#f6f7f9;--card:#fff;--line:#e5e7eb;--muted:#6b7280;--ok:#047857;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:#111827;font-size:14px}
+header{background:var(--brand);color:#fff;padding:18px 24px}
+header h1{margin:0;font-size:18px;font-weight:600}
+header p{margin:4px 0 0;opacity:.85;font-size:13px}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 24px 60px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+@media(max-width:980px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:20px}
+.card h2{margin:0 0 4px;font-size:15px;font-weight:600}
+.card .hint{color:var(--muted);font-size:12px;margin:0 0 14px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+select,input[type=number],input[type=text]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px;background:#fff;font-family:inherit}
+input[type=number]{text-align:right}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.off td{opacity:.4}
+.sw{position:relative;display:inline-block;width:36px;height:20px}
+.sw input{opacity:0;width:0;height:0}
+.sl{position:absolute;cursor:pointer;inset:0;background:#cbd5e1;border-radius:20px;transition:.15s}
+.sl:before{content:"";position:absolute;height:16px;width:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.15s}
+.sw input:checked+.sl{background:var(--brand)}
+.sw input:checked+.sl:before{transform:translateX(16px)}
+select.mini,input.mini{padding:4px 6px;font-size:12px;border-radius:6px}
+.trace{font-variant-numeric:tabular-nums}
+.trace div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)}
+.trace div.sum{border-bottom:2px solid #111827;font-weight:600}
+.trace div.total{border:none;font-weight:700;font-size:16px;color:var(--brand);padding-top:10px}
+.trace span.lbl{color:#374151}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;background:#f1f5f9;color:var(--muted);margin-left:6px}
+.diff{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:14px}
+.diff h3{margin:0 0 8px;font-size:13px}
+.up{color:var(--ok);font-weight:600}
+.down{color:#b91c1c;font-weight:600}
+.note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:10px 12px;font-size:12px;margin-top:12px}
+.btn{background:var(--brand);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit}
+.btn.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+.foot{color:var(--muted);font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Конструктор расчёта выплат — прототип</h1>
+  <p>Снимите галочку или измените процент — расчёт справа пересчитается сразу. Данные примеров взяты из вашего файла.</p>
+</header>
+
+<div class="wrap">
+<div class="grid">
+
+  <div>
+    <div class="card">
+      <h2>Схема врача</h2>
+      <p class="hint">Готовые схемы собраны из ваших листов Excel. Можно переключить и увидеть разницу.</p>
+      <div class="row">
+        <div>
+          <label>Врач / схема</label>
+          <select id="preset"></select>
+        </div>
+        <div>
+          <label>Доля врача</label>
+          <select id="shareMode">
+            <option value="constant">Константа</option>
+            <option value="by_source">По источнику записи</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" id="shareConst">
+        <div><label>Доля, %</label><input type="number" id="shareValue" step="1"></div>
+        <div></div>
+      </div>
+      <div class="row" id="shareBySource" style="display:none">
+        <div><label>Источник ВРАЧ, %</label><input type="number" id="shareDoctor" step="1"></div>
+        <div><label>Источник КЛИНИКА, %</label><input type="number" id="shareClinic" step="1"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Компоненты расчёта</h2>
+      <p class="hint">Включён / выключен · стадия · значение. Это и есть «у одних вычитается, у других нет».</p>
+      <table>
+        <thead><tr><th style="width:44px">Вкл</th><th>Компонент</th><th style="width:120px">Стадия</th><th style="width:170px">Значение</th><th class="num" style="width:100px">Сумма</th></tr></thead>
+        <tbody id="components"></tbody>
+      </table>
+      <div class="note" id="warn" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Данные операции (пример)</h2>
+      <p class="hint">Подставляются из карточки операции и склада. Здесь — чтобы посмотреть, как меняется расчёт.</p>
+      <div class="row">
+        <div><label>Сумма операции, ₸</label><input type="number" id="base"></div>
+        <div><label>Источник записи</label><select id="source"><option>ВРАЧ</option><option>КЛИНИКА</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Оплата Kaspi, ₸</label><input type="number" id="payKaspi"></div>
+        <div><label>Оплата Forte, ₸</label><input type="number" id="payForte"></div>
+      </div>
+      <div class="row">
+        <div><label>Рассрочка, ₸</label><input type="number" id="payInstal"></div>
+        <div><label>Наличные, ₸</label><input type="number" id="payCash"></div>
+      </div>
+      <div class="row">
+        <div><label>Наркоз / седация, ₸</label><input type="number" id="anesthesia"></div>
+        <div><label>Расходники (склад), ₸</label><input type="number" id="materials"></div>
+      </div>
+      <div class="row">
+        <div><label>Импланты, ₸</label><input type="number" id="implants"></div>
+        <div><label>Медсестра / ассистент, ₸</label><input type="number" id="assistant"></div>
+      </div>
+      <div class="foot" id="paidInfo"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Как посчитано</h2>
+      <p class="hint">Этот же экран видит врач при разборе выплаты — каждая цифра объяснена.</p>
+      <div class="trace" id="trace"></div>
+      <div class="diff">
+        <h3>Проверка на данных: было / стало</h3>
+        <div id="cmp"></div>
+        <div class="foot">«Было» — исходная схема из вашего Excel. «Стало» — с вашими изменениями слева.</div>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:8px">
+        <button class="btn ghost" onclick="resetPreset()">Вернуть исходную схему</button>
+        <button class="btn" onclick="alert('В приложении: сохранение создаёт новую версию схемы с датой начала действия. Прошлые расчёты не меняются.')">Сохранить как новую версию</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Что это демонстрирует</h2>
+      <p class="hint" style="margin-bottom:10px">Требования из вашего сообщения и как они реализованы.</p>
+      <table>
+        <tr><td>«у некоторых расходники отнимаются, у некоторых нет»</td><td style="color:var(--ok);font-weight:600;white-space:nowrap">галочка «Вкл»</td></tr>
+        <tr><td>«комиссия банка может меняться»</td><td style="color:var(--ok);font-weight:600;white-space:nowrap">справочник или свой %</td></tr>
+        <tr><td>«админ сам выбирает, какие расходы учитывать»</td><td style="color:var(--ok);font-weight:600;white-space:nowrap">любой компонент</td></tr>
+        <tr><td>Новая статья расхода</td><td style="color:var(--ok);font-weight:600;white-space:nowrap">без правки кода</td></tr>
+        <tr><td>Защита от случайной ошибки</td><td style="color:var(--ok);font-weight:600;white-space:nowrap">«было / стало»</td></tr>
+      </table>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+const fmt = n => new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(Math.round(n*100)/100);
+
+// Ставки эквайринга из справочника (в приложении — с датами действия)
+const RATES = { kaspi:1.5, forte:2.3, instal:0, cash:0 };
+
+const COMPONENTS = [
+  {code:'acquiring', name:'Комиссия банка',            stage:'before', kind:'acquiring'},
+  {code:'anesthesia',name:'Наркоз / седация',          stage:'before', kind:'field', field:'anesthesia'},
+  {code:'implants',  name:'Импланты',                  stage:'before', kind:'field', field:'implants'},
+  {code:'materials', name:'Расходные материалы',       stage:'before', kind:'field', field:'materials'},
+  {code:'assistant', name:'Медсестра / ассистент',     stage:'before', kind:'field', field:'assistant'},
+  {code:'optax',     name:'Налог с операции',          stage:'before', kind:'pct_base', value:4},
+  {code:'dayrent',   name:'Аренда операционного дня',  stage:'after',  kind:'fixed', value:10000},
+  {code:'adminbonus',name:'Бонус администратора',      stage:'after',  kind:'by_source', value:{'КЛИНИКА':5000,'ВРАЧ':0}}
+];
+
+const PRESETS = {
+  suleymanova: {
+    label:'Сулейманова — модель «50/50» (лист «Сулейманова Новая форма», стр. 3)',
+    shareMode:'constant', shareValue:50, shareDoctor:60, shareClinic:50,
+    on:{acquiring:1,anesthesia:1,implants:1,materials:1,assistant:1,optax:0,dayrent:0,adminbonus:0},
+    own:{acquiring:{own:false,value:1.0}},
+    op:{base:1650000,source:'КЛИНИКА',payKaspi:1650000,payForte:0,payInstal:0,payCash:0,anesthesia:150000,materials:70000,implants:0,assistant:10000},
+    excel:701750
+  },
+  kulesbaev: {
+    label:'Кулесбаев — модель «% от чистой» (лист «Кулесбаев А», стр. 3)',
+    shareMode:'by_source', shareValue:60, shareDoctor:60, shareClinic:50,
+    on:{acquiring:1,anesthesia:1,implants:0,materials:1,assistant:0,optax:0,dayrent:1,adminbonus:0},
+    own:{acquiring:{own:false,value:1.5}},
+    op:{base:1900000,source:'ВРАЧ',payKaspi:600000,payForte:0,payInstal:1300000,payCash:0,anesthesia:0,materials:0,implants:0,assistant:0},
+    excel:1124600
+  },
+  rezident: {
+    label:'Резидент — модель «30%» (лист «резид», стр. 55)',
+    shareMode:'constant', shareValue:30, shareDoctor:30, shareClinic:30,
+    on:{acquiring:1,anesthesia:0,implants:0,materials:1,assistant:0,optax:1,dayrent:0,adminbonus:1},
+    own:{acquiring:{own:true,value:1.0}, optax:{own:true,value:4}, adminbonus:{own:true,value:5000}},
+    op:{base:200000,source:'ВРАЧ',payKaspi:200000,payForte:0,payInstal:0,payCash:0,anesthesia:0,materials:15000,implants:0,assistant:0},
+    excel:47500
+  }
+};
+
+let state = null, currentPreset = 'suleymanova';
+
+function buildPresetSelect(){
+  const s = document.getElementById('preset');
+  s.innerHTML = Object.entries(PRESETS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
+  s.value = currentPreset;
+}
+
+function loadPreset(key){
+  currentPreset = key;
+  const p = PRESETS[key];
+  state = {
+    shareMode:p.shareMode, shareValue:p.shareValue, shareDoctor:p.shareDoctor, shareClinic:p.shareClinic,
+    on:{...p.on},
+    own:JSON.parse(JSON.stringify(Object.assign({}, {acquiring:{own:false,value:1.5}}, p.own||{}))),
+    stage:Object.fromEntries(COMPONENTS.map(c=>[c.code,c.stage])),
+    op:{...p.op}
+  };
+  syncInputs();
+  renderComponents();
+  calc();
+}
+
+function syncInputs(){
+  document.getElementById('shareMode').value = state.shareMode;
+  document.getElementById('shareValue').value = state.shareValue;
+  document.getElementById('shareDoctor').value = state.shareDoctor;
+  document.getElementById('shareClinic').value = state.shareClinic;
+  document.getElementById('shareConst').style.display = state.shareMode==='constant'?'grid':'none';
+  document.getElementById('shareBySource').style.display = state.shareMode==='by_source'?'grid':'none';
+  for(const k of ['base','payKaspi','payForte','payInstal','payCash','anesthesia','materials','implants','assistant'])
+    document.getElementById(k).value = state.op[k];
+  document.getElementById('source').value = state.op.source;
+}
+
+function componentValueControl(c){
+  const own = state.own[c.code] || {own:false, value:c.value};
+  if(c.kind==='acquiring'){
+    return `<select class="mini" onchange="setOwn('${c.code}',this.value==='own')">
+        <option value="ref" ${!own.own?'selected':''}>Из справочника</option>
+        <option value="own" ${own.own?'selected':''}>Свой процент</option>
+      </select>` + (own.own?`<input class="mini" type="number" step="0.1" style="width:64px;margin-left:4px" value="${own.value}" onchange="setOwnVal('${c.code}',this.value)"> %`:'');
+  }
+  if(c.kind==='field') return '<span class="pill">из карточки операции</span>';
+  if(c.kind==='pct_base') return `<input class="mini" type="number" step="0.1" style="width:64px" value="${own.value}" onchange="setOwnVal('${c.code}',this.value)"> % от суммы`;
+  if(c.kind==='fixed') return `<input class="mini" type="number" step="500" style="width:88px" value="${own.value}" onchange="setOwnVal('${c.code}',this.value)"> ₸`;
+  if(c.kind==='by_source') return `<span class="pill">клиника ${fmt(c.value['КЛИНИКА'])} / врач 0</span>`;
+  return '';
+}
+
+function renderComponents(){
+  document.getElementById('components').innerHTML = COMPONENTS.map(c=>{
+    const on = !!state.on[c.code];
+    return `<tr class="${on?'':'off'}">
+      <td><label class="sw"><input type="checkbox" ${on?'checked':''} onchange="toggle('${c.code}',this.checked)"><span class="sl"></span></label></td>
+      <td>${c.name}</td>
+      <td><select class="mini" onchange="setStage('${c.code}',this.value)">
+            <option value="before" ${state.stage[c.code]==='before'?'selected':''}>до доли</option>
+            <option value="after" ${state.stage[c.code]==='after'?'selected':''}>после доли</option>
+          </select></td>
+      <td>${componentValueControl(c)}</td>
+      <td class="num" id="amt_${c.code}">—</td>
+    </tr>`;
+  }).join('');
+}
+
+function toggle(code,v){ state.on[code]=v?1:0; renderComponents(); calc(); }
+function setStage(code,v){ state.stage[code]=v; calc(); }
+function setOwn(code,v){ const o=state.own[code]||{value:1.5}; state.own[code]={own:v,value:o.value}; renderComponents(); calc(); }
+function setOwnVal(code,v){ const o=state.own[code]||{own:true}; state.own[code]={own:o.own===undefined?true:o.own,value:parseFloat(v)||0}; calc(); }
+function resetPreset(){ loadPreset(currentPreset); }
+
+function componentAmount(c, op, ownMap){
+  const own = (ownMap && ownMap[c.code]) || {};
+  if(c.kind==='acquiring'){
+    if(own.own) return (op.payKaspi+op.payForte+op.payInstal+op.payCash) * ((own.value||0)/100);
+    const kaspiRate = own.value!==undefined ? own.value : RATES.kaspi;
+    return op.payKaspi*(kaspiRate/100) + op.payForte*(RATES.forte/100) + op.payInstal*(RATES.instal/100) + op.payCash*(RATES.cash/100);
+  }
+  if(c.kind==='field') return op[c.field]||0;
+  if(c.kind==='pct_base') return op.base * ((own.value!==undefined?own.value:c.value)/100);
+  if(c.kind==='fixed') return (own.value!==undefined?own.value:c.value);
+  if(c.kind==='by_source') return own.own ? (own.value||0) : (c.value[op.source]||0);
+  return 0;
+}
+
+function compute(cfg, op){
+  const lines=[]; let before=0, after=0;
+  for(const c of COMPONENTS){
+    if(!cfg.on[c.code]) continue;
+    const amt = componentAmount(c, op, cfg.own);
+    const st = cfg.stage[c.code];
+    if(st==='before') before+=amt; else after+=amt;
+    lines.push({name:c.name, amt, stage:st, code:c.code});
+  }
+  const share = cfg.shareMode==='by_source' ? (op.source==='ВРАЧ'?cfg.shareDoctor:cfg.shareClinic) : cfg.shareValue;
+  const baseForShare = op.base - before;
+  const afterShare = baseForShare * (share/100);
+  const full = afterShare - after;
+  const paid = op.payKaspi+op.payForte+op.payInstal+op.payCash;
+  const k = op.base>0 ? Math.min(1, paid/op.base) : 0;
+  return {lines, before, after, share, baseForShare, afterShare, full, k, accrued: full*k, paid};
+}
+
+function calc(){
+  for(const k of ['base','payKaspi','payForte','payInstal','payCash','anesthesia','materials','implants','assistant'])
+    state.op[k] = parseFloat(document.getElementById(k).value)||0;
+  state.op.source = document.getElementById('source').value;
+  state.shareMode = document.getElementById('shareMode').value;
+  state.shareValue = parseFloat(document.getElementById('shareValue').value)||0;
+  state.shareDoctor = parseFloat(document.getElementById('shareDoctor').value)||0;
+  state.shareClinic = parseFloat(document.getElementById('shareClinic').value)||0;
+  document.getElementById('shareConst').style.display = state.shareMode==='constant'?'grid':'none';
+  document.getElementById('shareBySource').style.display = state.shareMode==='by_source'?'grid':'none';
+
+  const now = compute(state, state.op);
+  const p = PRESETS[currentPreset];
+  const orig = compute({shareMode:p.shareMode,shareValue:p.shareValue,shareDoctor:p.shareDoctor,shareClinic:p.shareClinic,
+    on:p.on, stage:Object.fromEntries(COMPONENTS.map(c=>[c.code,c.stage])), own:p.own}, p.op);
+
+  for(const c of COMPONENTS){
+    const el = document.getElementById('amt_'+c.code);
+    if(!el) continue;
+    const l = now.lines.find(x=>x.code===c.code);
+    el.textContent = l ? '−'+fmt(l.amt) : '—';
+  }
+
+  let html = `<div><span class="lbl">Сумма операции</span><b>${fmt(state.op.base)}</b></div>`;
+  now.lines.filter(l=>l.stage==='before').forEach(l=>{ html += `<div><span class="lbl">− ${l.name}</span><span>${fmt(l.amt)}</span></div>`; });
+  html += `<div class="sum"><span class="lbl">= База для доли</span><b>${fmt(now.baseForShare)}</b></div>`;
+  html += `<div><span class="lbl">× Доля врача ${now.share}%${state.shareMode==='by_source'?' (источник '+state.op.source+')':''}</span><b>${fmt(now.afterShare)}</b></div>`;
+  now.lines.filter(l=>l.stage==='after').forEach(l=>{ html += `<div><span class="lbl">− ${l.name}</span><span>${fmt(l.amt)}</span></div>`; });
+  html += `<div class="sum"><span class="lbl">= Начислено при 100% оплате</span><b>${fmt(now.full)}</b></div>`;
+  html += `<div><span class="lbl">× Коэффициент оплаты ${now.k.toFixed(2)} (оплачено ${fmt(now.paid)})</span><span></span></div>`;
+  html += `<div class="total"><span>Начислено врачу</span><span>${fmt(now.accrued)} ₸</span></div>`;
+  document.getElementById('trace').innerHTML = html;
+
+  document.getElementById('paidInfo').textContent =
+    'Оплачено ' + fmt(now.paid) + ' из ' + fmt(state.op.base) + ' ₸ · коэффициент оплаты ' + now.k.toFixed(2);
+
+  const d = now.full - orig.full;
+  const pct = orig.full ? (d/orig.full*100) : 0;
+  document.getElementById('cmp').innerHTML =
+    `<div class="trace">
+      <div><span class="lbl">Было (исходная схема, совпадает с Excel: ${fmt(p.excel)} ₸)</span><b>${fmt(orig.full)}</b></div>
+      <div><span class="lbl">Стало (текущие настройки)</span><b>${fmt(now.full)}</b></div>
+      <div class="sum"><span class="lbl">Разница</span><span class="${d>0?'up':(d<0?'down':'')}">${d>0?'+':''}${fmt(d)} ₸ (${pct>0?'+':''}${pct.toFixed(1)}%)</span></div>
+    </div>`;
+
+  const warn = document.getElementById('warn');
+  if(Math.abs(pct) > 20){
+    warn.style.display='block';
+    warn.textContent = 'Выплата изменилась на ' + pct.toFixed(1) + '%. В приложении такое изменение потребует отдельного подтверждения перед сохранением новой версии схемы.';
+  } else warn.style.display='none';
+}
+
+buildPresetSelect();
+document.getElementById('preset').addEventListener('change', e=>loadPreset(e.target.value));
+['shareMode','shareValue','shareDoctor','shareClinic','base','payKaspi','payForte','payInstal','payCash','anesthesia','materials','implants','assistant','source']
+  .forEach(id=>document.getElementById(id).addEventListener('input', calc));
+loadPreset('suleymanova');
+</script>
+</body>
+</html>

@@ -1,0 +1,439 @@
+// ============================================================================
+//  Модуль «Выплаты врачам» — авторитетный источник моделей Prisma
+//  Проект: atmos-uchet · К ТЗ_Выплаты_врачам_v1.4.md (раздел 9)
+//  Версия: 1.0 · 19.08.2026
+// ----------------------------------------------------------------------------
+//  КАК ПРИМЕНЯТЬ
+//  1. Блоки ниже добавляются в server/prisma/schema.prisma КАК ЕСТЬ.
+//     Существующие модели не переписывать.
+//  2. Единственная правка существующих моделей — блок «ДОПОЛНЕНИЯ К Operation»
+//     в конце файла: два новых поля с @default(0) и две обратные связи
+//     (обратные связи не создают колонок в БД).
+//  3. Порядок по этапам плана разработки:
+//       Э0-1 — конструктор: DoctorPayee, CalcComponent, ComponentTableValue,
+//              PayoutScheme, SchemeComponent, SchemeShareValue, AcquiringRate,
+//              AnesthesiaTariff, MaterialNorm + все enum
+//       Э1-1 — OperationParticipant + дополнения к Operation
+//       Э2-2 — PayoutAccrual
+//       Э3-1 — PayoutSheet, PayoutSheetLine, PayoutPayment
+//     Можно добавить всё сразу — это безопасно, но тогда db push пройдёт один раз.
+//  4. Все изменения аддитивные: прод применяет схему командой
+//     `npx prisma db push` БЕЗ --accept-data-loss. Обязательных полей без
+//     @default в существующих моделях быть не должно.
+// ============================================================================
+
+
+// ===================== ПЕРЕЧИСЛЕНИЯ =====================
+
+/// Тип получателя выплаты
+enum PayeeKind {
+  surgeon           // хирург
+  anesthesiologist  // анестезиолог
+  resident          // резидент
+  assistant         // ассистент / анестезист
+}
+
+/// Форма получателя: физлицо или ИП (для АВР и удержания 3%)
+enum PayeeLegalForm {
+  individual
+  ip
+}
+
+/// Тип схемы выплаты
+enum SchemeKind {
+  share_based   // доля от базы за вычетом компонентов (хирурги, резиденты)
+  tariff_based  // тариф за операцию по шкале (анестезиологи)
+}
+
+/// Способ определения суммы компонента расчёта
+enum ComponentValueSource {
+  fixed              // фиксированная сумма, задаётся в схеме
+  pct_of_base        // процент от базы начисления
+  pct_of_payments    // процент от фактических платежей (комиссия эквайринга)
+  operation_field    // значение поля карточки операции
+  warehouse_fact     // фактическая себестоимость списаний со склада
+  warehouse_or_norm  // факт со склада, при отсутствии — норматив по виду операции
+  table_by_source    // сумма из таблицы «источник записи → значение»
+  table_by_op_type   // сумма из таблицы «вид операции → значение»
+  manual             // вводится вручную по каждой операции
+  per_day            // фиксированная сумма один раз за операционный день
+}
+
+/// Направление компонента: вычет или доплата
+enum ComponentDirection {
+  deduction
+  addition
+}
+
+/// Стадия расчёта: до применения доли врача или после
+enum CalcStage {
+  before_share
+  after_share
+}
+
+/// Режим определения доли врача
+enum ShareMode {
+  constant     // одно число
+  by_source    // таблица «источник записи → доля» (ВРАЧ 60% / КЛИНИКА 50%)
+  by_op_type   // таблица «вид операции → доля»
+}
+
+/// Статус начисления
+enum AccrualStatus {
+  free       // право наступило, в ведомость не включено
+  locked     // включено в утверждённую ведомость
+  paid       // ведомость оплачена
+  cancelled  // аннулировано (операция удалена до включения в ведомость)
+}
+
+/// Тип ведомости
+enum SheetKind {
+  weekly
+  monthly
+  custom
+  adhoc  // выборочная (внеочередная) — по конкретным операциям
+}
+
+/// Статус ведомости
+enum SheetStatus {
+  draft
+  approved
+  paid
+}
+
+
+// ===================== ПОЛУЧАТЕЛИ ВЫПЛАТ =====================
+
+/// Получатель выплаты. Связан со справочником DictionaryItem(category='doctor')
+/// по строковому значению dictionaryLabel, но является самостоятельной сущностью:
+/// переименование в справочнике не должно ломать прошлые расчёты.
+model DoctorPayee {
+  id              Int            @id @default(autoincrement())
+  fio             String         @unique
+  dictionaryLabel String?        @unique // точное значение из справочника doctor / Operation.surgeon
+  kind            PayeeKind
+  legalForm       PayeeLegalForm @default(individual)
+  iin             String? // ИИН для АВР; отдавать только администратору
+  bankAccount     String?
+  active          Boolean        @default(true)
+  userId          Int? // связь с User, если врач получит доступ в приложение (на будущее)
+  note            String?
+
+  schemes      PayoutScheme[]
+  accruals     PayoutAccrual[]
+  sheetLines   PayoutSheetLine[]
+  participants OperationParticipant[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([kind, active])
+}
+
+
+// ===================== КОНСТРУКТОР РАСЧЁТА =====================
+
+/// Справочник компонентов расчёта. Системные (isSystem) создаются сидом и не
+/// удаляются; администратор может добавлять свои без правки кода.
+model CalcComponent {
+  id             Int                  @id @default(autoincrement())
+  code           String               @unique // acquiring | materials | anesthesia | ...
+  name           String // отображаемое: «Комиссия банка»
+  valueSource    ComponentValueSource
+  direction      ComponentDirection   @default(deduction)
+  defaultStage   CalcStage            @default(before_share)
+  defaultValue   Decimal?             @db.Decimal(14, 4) // сумма или процент по умолчанию
+  operationField String? // для operation_field: anesthesiaCost | implantsCost | assistantCost
+  isSystem       Boolean              @default(false) // нельзя удалить, можно отключить в схеме
+  isActive       Boolean              @default(true)
+  sortOrder      Int                  @default(0)
+  description    String?
+
+  schemeItems SchemeComponent[]
+  tableValues ComponentTableValue[]
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+  updatedBy Int?
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+/// Значения компонентов табличного типа: «источник записи → сумма»,
+/// «вид операции → сумма». schemeId = null — значение по умолчанию,
+/// иначе переопределение в конкретной схеме.
+model ComponentTableValue {
+  id          Int           @id @default(autoincrement())
+  component   CalcComponent @relation(fields: [componentId], references: [id])
+  componentId Int
+  schemeId    Int? // без relation: значение может существовать вне схемы
+  key         String // «КЛИНИКА» | «ВРАЧ» | «Ринопластика»
+  value       Decimal       @db.Decimal(14, 4)
+  validFrom   DateTime
+
+  @@index([componentId, schemeId, validFrom])
+}
+
+/// Схема выплаты врача. ВЕРСИОНИРУЕТСЯ: правка условий = новая запись с новой
+/// validFrom; у предыдущей проставляется validTo и replacedById.
+/// Расчёт всегда берёт версию, действовавшую на дату операции.
+model PayoutScheme {
+  id            Int        @id @default(autoincrement())
+  payee         DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId       Int
+  name          String // «50/50 клиника», «60/50 по источнику», «Резидент 30%»
+  kind          SchemeKind @default(share_based)
+  shareMode     ShareMode  @default(constant)
+  shareValue    Decimal?   @db.Decimal(6, 4) // доля для режима constant (0.5 = 50%)
+  costRecovery  String     @default("proportional") // proportional | costs_first
+  withholdIpPct Decimal    @default(0) @db.Decimal(5, 2) // удержание при выплате на счёт ИП
+  validFrom     DateTime
+  validTo       DateTime? // null = действует бессрочно
+  version       Int        @default(1)
+  replacedById  Int? // версия, которая её заменила
+  note          String?
+
+  items       SchemeComponent[]
+  shareValues SchemeShareValue[]
+  tariffs     AnesthesiaTariff[]
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+  updatedBy Int?
+  updatedAt DateTime @updatedAt
+
+  @@index([payeeId, validFrom])
+}
+
+/// Строка схемы: компонент с настройками под конкретного врача.
+/// Здесь живёт ключевой флаг enabled — «у одних вычитается, у других нет».
+model SchemeComponent {
+  id          Int           @id @default(autoincrement())
+  scheme      PayoutScheme  @relation(fields: [schemeId], references: [id])
+  schemeId    Int
+  component   CalcComponent @relation(fields: [componentId], references: [id])
+  componentId Int
+  enabled     Boolean       @default(true)
+  stage       CalcStage // переопределение стадии компонента
+  useOwnValue Boolean       @default(false) // true = value, false = справочник/умолчание
+  value       Decimal?      @db.Decimal(14, 4)
+  filter      Json? // {terminals:[...]} для комиссии, {categories:[...]} для склада
+  sortOrder   Int           @default(0)
+
+  @@unique([schemeId, componentId])
+  @@index([schemeId])
+}
+
+/// Доля врача для режимов by_source / by_op_type.
+model SchemeShareValue {
+  id       Int          @id @default(autoincrement())
+  scheme   PayoutScheme @relation(fields: [schemeId], references: [id])
+  schemeId Int
+  key      String // «ВРАЧ» | «КЛИНИКА» | «КЛИНИКА+ВРАЧ» | вид операции
+  share    Decimal      @db.Decimal(6, 4) // 0.6 = 60%
+
+  @@unique([schemeId, key])
+}
+
+
+// ===================== СТАВКИ И НОРМАТИВЫ =====================
+
+/// Ставка эквайринга по терминалу с датой начала действия. APPEND-ONLY:
+/// изменение тарифа банка = новая запись, старые сохраняются для прошлых расчётов.
+/// Отсутствие ставки на дату платежа — ошибка расчёта, а не ноль.
+model AcquiringRate {
+  id        Int      @id @default(autoincrement())
+  terminal  String // значение справочника terminal, либо «Рассрочка» / «Наличные»
+  ratePct   Decimal  @db.Decimal(5, 3)
+  validFrom DateTime
+  note      String?
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([terminal, validFrom])
+}
+
+/// Ступени тарифа анестезиолога: тип наркоза + диапазон количества операций
+/// за календарный месяц. schemeId = null — общий тариф для всех.
+model AnesthesiaTariff {
+  id             Int           @id @default(autoincrement())
+  scheme         PayoutScheme? @relation(fields: [schemeId], references: [id])
+  schemeId       Int?
+  anesthesiaType String // общий | седация | седация-фейс | дежурство день | дежурство ночь
+  minCount       Int           @default(1)
+  maxCount       Int? // null = без верхней границы
+  amount         Decimal       @db.Decimal(14, 2)
+  validFrom      DateTime
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([schemeId, validFrom])
+}
+
+/// Норматив расходных материалов по виду операции — подставляется компонентом
+/// warehouse_or_norm, если списаний по операции нет.
+model MaterialNorm {
+  id        Int      @id @default(autoincrement())
+  opType    String // значение справочника op_type
+  amount    Decimal  @db.Decimal(14, 2)
+  validFrom DateTime
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([opType, validFrom])
+}
+
+
+// ===================== УЧАСТНИКИ ОПЕРАЦИИ =====================
+
+/// Кто участвовал в операции и в какой роли. Не заменяет поля Operation.surgeon
+/// и Operation.anesthesiologist — они продолжают заполняться синхронно
+/// (их читают KPI, экспорт и фильтры).
+model OperationParticipant {
+  id             Int         @id @default(autoincrement())
+  operation      Operation   @relation(fields: [operationId], references: [id])
+  operationId    Int
+  payee          DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId        Int
+  role           PayeeKind
+  sharePct       Decimal?    @db.Decimal(5, 2) // деление гонорара между двумя хирургами (сумма = 100)
+  anesthesiaType String? // общий | седация | седация-фейс — для тарифа анестезиолога
+  shiftDay       Boolean     @default(false) // дежурство день
+  shiftNight     Boolean     @default(false) // дежурство ночь
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@unique([operationId, payeeId, role])
+  @@index([operationId])
+  @@index([payeeId])
+}
+
+
+// ===================== НАЧИСЛЕНИЯ (СОБЫТИЙНАЯ МОДЕЛЬ) =====================
+
+/// Начисление — СОБЫТИЕ, а не строка за месяц. Создаётся при поступлении денег
+/// по операции (eventDate = дата платежа) либо как корректировка.
+/// Одно начисление может попасть максимум в одну ведомость (sheetId).
+model PayoutAccrual {
+  id            Int         @id @default(autoincrement())
+  payee         DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId       Int
+  operation     Operation   @relation(fields: [operationId], references: [id])
+  operationId   Int
+  schemeId      Int // какая схема применена
+  schemeVersion Int
+
+  triggerPaymentId Int? // платёж, породивший начисление (null для корректировок)
+  eventDate        DateTime // ДАТА СОБЫТИЯ — по ней идёт отбор в ведомость
+  isCorrection     Boolean  @default(false)
+
+  base       Decimal @db.Decimal(14, 2) // база начисления
+  paidRatio  Decimal @db.Decimal(6, 4) // коэффициент оплаты после события
+  sharePct   Decimal @db.Decimal(6, 4)
+  components Json // [{code,label,stage,direction,amount,source:'auto'|'manual',comment}]
+  amountFull Decimal @db.Decimal(14, 2) // начисление при 100% оплате
+  amount     Decimal @db.Decimal(14, 2) // дельта события (может быть отрицательной)
+  calcTrace  Json // пошаговый расчёт для экрана «Как посчитано»
+
+  status  AccrualStatus @default(free)
+  sheet   PayoutSheet?  @relation(fields: [sheetId], references: [id])
+  sheetId Int? // заполняется при утверждении ведомости
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([payeeId, status, eventDate])
+  @@index([operationId])
+  @@index([sheetId])
+  @@index([status, eventDate])
+}
+
+
+// ===================== ВЕДОМОСТИ =====================
+
+/// Ведомость выплаты: период (неделя / месяц / произвольный) либо выборка операций.
+model PayoutSheet {
+  id         Int         @id @default(autoincrement())
+  number     String      @unique // ВВ-2026-08-003
+  kind       SheetKind
+  periodFrom DateTime? // null для adhoc
+  periodTo   DateTime?
+  status     SheetStatus @default(draft)
+  snapshot   Json? // полный снимок расчёта на момент утверждения
+  note       String?
+
+  lines    PayoutSheetLine[]
+  accruals PayoutAccrual[]
+
+  approvedBy Int?
+  approvedAt DateTime?
+  paidAt     DateTime?
+  createdBy  Int?
+  createdAt  DateTime  @default(now())
+  updatedBy  Int?
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status, periodFrom])
+}
+
+/// Строка ведомости — итог по одному врачу.
+model PayoutSheetLine {
+  id      Int         @id @default(autoincrement())
+  sheet   PayoutSheet @relation(fields: [sheetId], references: [id])
+  sheetId Int
+  payee   DoctorPayee @relation(fields: [payeeId], references: [id])
+  payeeId Int
+
+  operationsCount Int     @default(0)
+  accruedTotal    Decimal @db.Decimal(14, 2) // сумма начислений, включая корректировки
+  withholdings    Json // [{type, amount, comment}] — ручной ввод бухгалтера
+  toPay           Decimal @db.Decimal(14, 2)
+  paidTotal       Decimal @default(0) @db.Decimal(14, 2)
+  actNumber       String?
+  actSigned       Boolean @default(false)
+
+  payments PayoutPayment[]
+
+  @@unique([sheetId, payeeId])
+  @@index([payeeId])
+}
+
+/// Факт выплаты. Может быть несколько частями и разными каналами.
+model PayoutPayment {
+  id      Int             @id @default(autoincrement())
+  line    PayoutSheetLine @relation(fields: [lineId], references: [id])
+  lineId  Int
+  date    DateTime
+  amount  Decimal         @db.Decimal(14, 2)
+  channel String // «на расчётный счёт» | «наличные» | «перевод Kaspi»
+  note    String?
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+
+  @@index([lineId])
+}
+
+
+// ============================================================================
+//  ДОПОЛНЕНИЯ К СУЩЕСТВУЮЩЕЙ МОДЕЛИ Operation (этап Э1-1)
+//  Добавить ВНУТРЬ существующего блока model Operation { ... }, ничего не удаляя:
+//
+//    implantsCost   Decimal @default(0) @db.Decimal(14,2)  // стоимость имплантов
+//    assistantCost  Decimal @default(0) @db.Decimal(14,2)  // оплата ассистенту/медсестре
+//
+//    participants   OperationParticipant[]                  // обратная связь, колонок не создаёт
+//    payoutAccruals PayoutAccrual[]                         // обратная связь, колонок не создаёт
+//
+//  Поля surgeon и anesthesiologist НЕ УДАЛЯТЬ и продолжать заполнять
+//  синхронно из участников (задача Э1-3) — их читают KPI, экспорт и фильтры.
+// ============================================================================
