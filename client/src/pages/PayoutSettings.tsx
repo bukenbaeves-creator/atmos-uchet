@@ -315,13 +315,16 @@ function NormsTab() {
 }
 
 // ---------- Схемы выплат (версионные) ----------
-interface Scheme { id: number; payeeId: number; name: string; kind: string; shareMode: string; shareValue: number | null; version: number; validFrom: string; validTo: string | null; items: unknown[]; shareValues: unknown[]; }
+interface SchemeItem { componentId: number; enabled: boolean; stage: string; useOwnValue: boolean; value: number | null }
+interface SchemeShare { key: string; share: number }
+interface Scheme { id: number; payeeId: number; name: string; kind: string; shareMode: string; shareValue: number | null; withholdIpPct?: number; note?: string | null; version: number; validFrom: string; validTo: string | null; items: SchemeItem[]; shareValues: SchemeShare[]; }
 function SchemesTab() {
   const qc = useQueryClient();
   const { data, isLoading, isError } = useItems<Scheme>('payout-schemes', '/payouts/schemes');
   const payees = useItems<Payee>('payout-payees', '/payouts/payees');
   const comps = useItems<Comp>('payout-components', '/payouts/components');
   const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState<Scheme | null>(null); // просмотр параметров сохранённой схемы
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '2020-01-01', note: '' });
   const [shareRows, setShareRows] = useState<{ key: string; share: string }[]>([{ key: '', share: '' }]);
@@ -395,10 +398,81 @@ function SchemesTab() {
   return (
     <div>
       <div className="mb-3 flex justify-end"><button className="btn-primary" onClick={() => { reset(); setOpen(true); }}>+ Схема</button></div>
-      <p className="mb-3 text-sm text-slate-500">Изменение условий схемы создаёт новую версию: предыдущая закрывается предыдущим днём. Периоды одного врача не пересекаются.</p>
+      <p className="mb-3 text-sm text-slate-500">Изменение условий схемы создаёт новую версию: предыдущая закрывается предыдущим днём. Периоды одного врача не пересекаются. Клик по строке — просмотр параметров схемы.</p>
       <TabShell isLoading={isLoading} isError={isError} empty={!data || data.items.length === 0}>
-        <Table columns={columns} rows={data?.items ?? []} />
+        <Table columns={columns} rows={data?.items ?? []} onRowClick={(s) => setViewing(s)} />
       </TabShell>
+
+      {/* Просмотр параметров сохранённой схемы (версии неизменяемы — только чтение) */}
+      <Modal open={viewing != null} onClose={() => setViewing(null)} title={`Схема «${viewing?.name ?? ''}» · версия ${viewing?.version ?? ''}`} wide>
+        {viewing && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div><div className="label">Врач</div><div className="font-medium">{payeeName(viewing.payeeId)}</div></div>
+              <div><div className="label">Тип</div><div>{SCHEME_KIND_LABEL[viewing.kind] ?? viewing.kind}</div></div>
+              <div><div className="label">Период действия</div><div>{fmtDate(viewing.validFrom)} — {viewing.validTo ? fmtDate(viewing.validTo) : 'действует'}</div></div>
+              <div><div className="label">Статус</div>{viewing.validTo ? <Badge tone="slate">закрытая версия</Badge> : <Badge tone="green">действующая</Badge>}</div>
+            </div>
+
+            <div>
+              <div className="label">Доля врача</div>
+              {viewing.shareMode === 'constant' ? (
+                <div className="font-medium">{viewing.shareValue != null ? `${Math.round(viewing.shareValue * 10000) / 100}%` : '—'} <span className="font-normal text-slate-400">(постоянная)</span></div>
+              ) : (
+                <table className="mt-1 text-sm">
+                  <tbody>
+                    {viewing.shareValues.map((sv, i) => (
+                      <tr key={i}><td className="pr-6 text-slate-600">{sv.key}</td><td className="text-right font-medium tabular-nums">{Math.round(Number(sv.share) * 10000) / 100}%</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div>
+              <div className="label">Компоненты вычетов/начислений</div>
+              {viewing.items.length === 0 ? (
+                <div className="text-slate-400">Компоненты не включены.</div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-100">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                        <th className="px-3 py-1.5">Компонент</th>
+                        <th className="px-3 py-1.5">Стадия</th>
+                        <th className="px-3 py-1.5 text-right">Значение</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewing.items.map((it) => {
+                        const c = comps.data?.items.find((x) => x.id === it.componentId);
+                        const vs = c?.valueSource;
+                        const isPct = vs === 'pct_of_payments' || vs === 'pct_of_base';
+                        let valText = '—';
+                        if (it.useOwnValue && it.value != null) valText = isPct ? `${Number(it.value)}%` : fmtMoney(Number(it.value));
+                        else if (vs === 'operation_field') valText = 'из карточки операции';
+                        else if (vs === 'warehouse_or_norm') valText = 'склад / норматив (больший)';
+                        else if (vs === 'pct_of_payments') valText = 'ставка терминала';
+                        return (
+                          <tr key={it.componentId} className={`border-b border-slate-50 last:border-0 ${it.enabled ? '' : 'text-slate-300 line-through'}`}>
+                            <td className="px-3 py-1.5">{c?.name ?? `#${it.componentId}`} <code className="text-xs text-slate-400">{c?.code ?? ''}</code></td>
+                            <td className="px-3 py-1.5">{STAGE_LABEL[it.stage] ?? it.stage}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">{valText}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {viewing.note && <div><div className="label">Примечание</div><div className="text-slate-600">{viewing.note}</div></div>}
+            <p className="text-xs text-slate-400">Версии схем неизменяемы (по ним считались начисления). Чтобы поменять условия — создайте новую версию через «+ Схема» для этого врача.</p>
+            <div className="flex justify-end"><button className="btn-ghost" onClick={() => setViewing(null)}>Закрыть</button></div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Новая схема / версия" wide>
         <form onSubmit={submit} className="space-y-4">
