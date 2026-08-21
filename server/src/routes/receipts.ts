@@ -10,7 +10,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { writeAudit } from '../services/audit.service.js';
 import { serialize } from '../lib/serialize.js';
-import { requiredDate, optionalDate, optionalString, moneyAmount } from '../schemas.js';
+import { requiredDate, expiryDateSchema, optionalString, moneyAmount } from '../schemas.js';
 import { matchOrCreateNomenclature } from '../services/nomenclature-match.service.js';
 import { parseReceiptRows, type ParsedLine } from '../services/receipt-import.service.js';
 import { stripCost } from '../services/expense-visibility.service.js';
@@ -38,14 +38,18 @@ const BULK_TX_OPTS = { maxWait: 20_000, timeout: 120_000 };
 const router = Router();
 router.use(requireAuth, requireRole('nurse', 'admin'));
 
-const qty = z.coerce.number({ invalid_type_error: 'Количество должно быть числом' }).positive('Количество должно быть больше нуля').max(1_000_000);
+const qty = z.coerce
+  .number({ invalid_type_error: 'Количество должно быть числом' })
+  .positive('Количество должно быть больше нуля')
+  .max(1_000_000, 'Количество слишком большое (максимум 1 000 000)');
 
 const lineSchema = z.object({
-  name: z.string().trim().min(1, 'Укажите наименование позиции').max(300),
+  name: z.string().trim().min(1, 'Укажите наименование позиции').max(300, 'Слишком длинное наименование'),
   qty,
   purchasePrice: moneyAmount(),
   series: optionalString(100),
-  expiryDate: optionalDate,
+  // Срок годности медикаментов — до +15 лет (общая граница дат +2 года резала приходы).
+  expiryDate: expiryDateSchema,
 });
 
 const schema = z.object({

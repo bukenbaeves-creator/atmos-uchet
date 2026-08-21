@@ -22,13 +22,18 @@ function inBounds(d: Date): boolean {
   return d.getTime() >= DATE_MIN.getTime() && d.getTime() <= dateMax().getTime();
 }
 
-// Обязательная дата: пусто/неверно ('' , null, undefined, Invalid, вне диапазона) -> русская ошибка.
+// Сообщение для дат вне бизнес-диапазона — раньше сливалось с «необходимо указать
+// дату», из-за чего пользователь не понимал, что дата УКАЗАНА, но не проходит границы.
+const OUT_OF_RANGE_MSG = 'Дата вне допустимого диапазона (с 2020 года и не дальше чем через 2 года)';
+
+// Обязательная дата: пусто/нераспознано -> required-сообщение; вне диапазона -> своё сообщение.
 export const requiredDate = (msg: string) =>
   z.preprocess((v) => {
     if (v === '' || v == null) return undefined;
     const d = v instanceof Date ? v : new Date(v as string);
-    return isNaN(d.getTime()) || !inBounds(d) ? undefined : d;
-  }, z.date({ required_error: msg, invalid_type_error: msg }));
+    if (isNaN(d.getTime())) return undefined;
+    return inBounds(d) ? d : NaN; // NaN -> invalid_type_error (диапазон)
+  }, z.date({ required_error: msg, invalid_type_error: OUT_OF_RANGE_MSG }));
 
 // Необязательная дата: пусто/неверно -> null; вне разумного диапазона -> ошибка.
 export const optionalDate = z.preprocess((v) => {
@@ -36,7 +41,22 @@ export const optionalDate = z.preprocess((v) => {
   const d = v instanceof Date ? v : new Date(v as string);
   if (isNaN(d.getTime())) return null;
   return inBounds(d) ? d : NaN;
-}, z.date({ invalid_type_error: 'Недопустимая дата' }).nullable());
+}, z.date({ invalid_type_error: OUT_OF_RANGE_MSG }).nullable());
+
+// Срок годности: СВОЯ верхняя граница (+15 лет). У медикаментов срок годности законно
+// дальше бизнес-горизонта обычных дат (+2 года) — из-за общей границы приход медсестры
+// «периодически» падал на позициях со сроком 2029+.
+const expiryMax = () => {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() + 15);
+  return d;
+};
+export const expiryDateSchema = z.preprocess((v) => {
+  if (v === '' || v == null) return null;
+  const d = v instanceof Date ? v : new Date(v as string);
+  if (isNaN(d.getTime())) return null;
+  return d.getTime() >= DATE_MIN.getTime() && d.getTime() <= expiryMax().getTime() ? d : NaN;
+}, z.date({ invalid_type_error: 'Недопустимый срок годности (проверьте год: допустимо с 2020 до +15 лет)' }).nullable());
 
 // Дата рождения: не в будущем, не раньше 1900.
 export const birthDateSchema = z.preprocess((v) => {

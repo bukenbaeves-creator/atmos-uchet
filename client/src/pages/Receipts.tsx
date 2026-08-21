@@ -51,6 +51,15 @@ interface Line {
 
 const emptyLine = (): Line => ({ name: '', qty: '', purchasePrice: '', series: '', expiryDate: '', noExpiry: false });
 
+// Границы дат — как на сервере (schemas.ts): дата прихода до +2 лет, срок годности до +15 лет.
+const plusYearsISO = (n: number) => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + n);
+  return d.toISOString().slice(0, 10);
+};
+const RECEIPT_DATE_MAX = plusYearsISO(2);
+const EXPIRY_DATE_MAX = plusYearsISO(15);
+
 function StatusBadge({ status }: { status: 'pending' | 'approved' }) {
   return status === 'approved' ? <Badge tone="green">Одобрен</Badge> : <Badge tone="amber">На согласовании</Badge>;
 }
@@ -361,7 +370,7 @@ function ImportForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => vo
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="label">Дата прихода *</label>
-          <input type="date" className="input" required min="2020-01-01" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="date" className="input" required min="2020-01-01" max={RECEIPT_DATE_MAX} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>
           <label className="label">Поставщик</label>
@@ -536,7 +545,9 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
   const [note, setNote] = useState('');
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<{ path: string; message: string }[] | undefined>();
   const [busy, setBusy] = useState(false);
+
 
   // Автоподсказки: существующая номенклатура (для «Наименование») и поставщики.
   const { data: nomData } = useQuery({
@@ -558,6 +569,15 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setErrorDetails(undefined);
+    // Понятная проверка количества ДО отправки (браузер пропускает 0 и пустые строки).
+    for (let i = 0; i < lines.length; i++) {
+      const q = Number(lines[i].qty);
+      if (!(q > 0)) {
+        setError(`Количество в строке ${i + 1} должно быть больше нуля.`);
+        return;
+      }
+    }
     setBusy(true);
     try {
       await apiPost('/receipts', {
@@ -575,7 +595,12 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
       onSaved();
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
+      if (err instanceof ApiError) {
+        setError(err.message);
+        setErrorDetails(err.details); // показать, какое именно поле не прошло проверку
+      } else {
+        setError('Не удалось сохранить');
+      }
     } finally {
       setBusy(false);
     }
@@ -602,17 +627,17 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label className="label">Дата прихода *</label>
-          <input type="date" className="input" required min="2020-01-01" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="date" className="input" required min="2020-01-01" max={RECEIPT_DATE_MAX} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>
           <label className="label">
             Поставщик<Hint text="Начните вводить — подскажет ранее внесённых поставщиков." />
           </label>
-          <input className="input" list="receipt-suppliers" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="ТОО, аптека…" />
+          <input className="input" list="receipt-suppliers" maxLength={200} value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="ТОО, аптека…" />
         </div>
         <div>
           <label className="label">Примечание</label>
-          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
+          <input className="input" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
       </div>
 
@@ -624,7 +649,7 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
               <label className="label">
                 Наименование *<Hint text="Начните вводить — подскажет уже внесённые позиции." />
               </label>
-              <input className="input" list="nom-names" required value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} />
+              <input className="input" list="nom-names" required maxLength={300} value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} />
             </div>
             <div className="col-span-4 sm:col-span-1">
               <label className="label">Кол-во *</label>
@@ -640,7 +665,7 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
               <label className="label">
                 Серия<Hint text="Номер серии/партии от производителя (с упаковки) — для отзыва партий и контроля." />
               </label>
-              <input className="input" value={l.series} onChange={(e) => setLine(i, { series: e.target.value })} />
+              <input className="input" maxLength={100} value={l.series} onChange={(e) => setLine(i, { series: e.target.value })} />
             </div>
             <div className="col-span-6 sm:col-span-2">
               <label className="label">
@@ -650,6 +675,8 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
                 type="date"
                 className="input"
                 disabled={l.noExpiry}
+                min="2020-01-01"
+                max={EXPIRY_DATE_MAX}
                 value={l.noExpiry ? '' : l.expiryDate}
                 onChange={(e) => setLine(i, { expiryDate: e.target.value })}
               />
@@ -673,7 +700,24 @@ function ReceiptForm({ onDone, onSaved }: { onDone: () => void; onSaved: () => v
         </button>
       </div>
 
-      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {error && (
+        <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {errorDetails && errorDetails.length > 0 ? (
+            <>
+              <div className="font-medium">Проверьте заполнение полей:</div>
+              <ul className="mt-1 list-inside list-disc">
+                {errorDetails.map((d, i) => {
+                  // path вида "lines.2.expiryDate" → подсказываем номер строки
+                  const m = /^lines\.(\d+)\./.exec(d.path ?? '');
+                  return <li key={i}>{m ? `Строка ${Number(m[1]) + 1}: ` : ''}{d.message}</li>;
+                })}
+              </ul>
+            </>
+          ) : (
+            error
+          )}
+        </div>
+      )}
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={onDone}>
           Отмена
