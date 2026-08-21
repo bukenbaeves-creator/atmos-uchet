@@ -18,6 +18,7 @@ interface RegRow {
   sharePct: number;
   isCorrection: boolean;
   components: Record<string, number>;
+  materialsMethod: 'факт' | 'норматив' | null;
   amount: number;
 }
 interface Registry {
@@ -54,6 +55,10 @@ export function Registry() {
         format: 'money',
       }),
     ),
+    // Если материалы разложены на факт/норматив — показываем, какой метод в расчёте.
+    ...(data.columns.some((c) => c.code === 'materials_fact')
+      ? [{ id: 'method', header: 'Метод расхода', accessor: (r: RegRow) => (r.materialsMethod ? (r.materialsMethod === 'факт' ? 'по факту' : 'по нормативу') : '—') } as DataTableColumn<RegRow>]
+      : []),
     { id: 'share', header: 'Доля', accessor: (r) => `${Math.round(r.sharePct * 100)}%`, align: 'right' },
     { id: 'amount', header: 'Начислено', accessor: (r) => r.amount, align: 'right', format: 'money' },
   ];

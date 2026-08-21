@@ -300,16 +300,34 @@ export async function getSheetRegistry(sheetId: number, payeeId: number) {
   const stageRank = (s: string) => (s === 'before_share' ? 0 : 1);
   const colMap = new Map<string, { code: string; label: string; stage: string; order: number }>();
   let order = 0;
+  type Comp = { code: string; label: string; stage: string; amount: number; detail?: { fact: number; norm: number; method: 'факт' | 'норматив' } };
   for (const a of accruals) {
-    for (const c of (a.components as Array<{ code: string; label: string; stage: string }>) ?? []) {
-      if (!colMap.has(c.code)) colMap.set(c.code, { code: c.code, label: c.label, stage: c.stage, order: order++ });
+    for (const c of (a.components as Comp[]) ?? []) {
+      // Материалы разворачиваем в два столбца: «по факту» и «по нормативу».
+      if (c.code === 'materials') {
+        if (!colMap.has('materials_fact')) colMap.set('materials_fact', { code: 'materials_fact', label: 'Материалы (факт)', stage: c.stage, order: order++ });
+        if (!colMap.has('materials_norm')) colMap.set('materials_norm', { code: 'materials_norm', label: 'Материалы (норматив)', stage: c.stage, order: order++ });
+      } else if (!colMap.has(c.code)) {
+        colMap.set(c.code, { code: c.code, label: c.label, stage: c.stage, order: order++ });
+      }
     }
   }
   const columns = [...colMap.values()].sort((a, b) => stageRank(a.stage) - stageRank(b.stage) || a.order - b.order);
 
   const rows = accruals.map((a) => {
     const cmap: Record<string, number> = {};
-    for (const c of (a.components as Array<{ code: string; amount: number }>) ?? []) cmap[c.code] = Number(c.amount);
+    let materialsMethod: 'факт' | 'норматив' | null = null;
+    for (const c of (a.components as Comp[]) ?? []) {
+      if (c.code === 'materials') {
+        const fact = c.detail?.fact ?? Number(c.amount);
+        const norm = c.detail?.norm ?? 0;
+        cmap.materials_fact = fact;
+        cmap.materials_norm = norm;
+        materialsMethod = c.detail?.method ?? 'факт';
+      } else {
+        cmap[c.code] = Number(c.amount);
+      }
+    }
     return {
       accrualId: a.id,
       operationId: a.operationId,
@@ -320,6 +338,7 @@ export async function getSheetRegistry(sheetId: number, payeeId: number) {
       sharePct: Number(a.sharePct),
       isCorrection: a.isCorrection,
       components: cmap,
+      materialsMethod,
       amount: Number(a.amount),
     };
   });

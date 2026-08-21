@@ -82,6 +82,9 @@ export interface ComponentLine {
   stage: CalcStage;
   direction: ComponentDirection;
   amount: number;
+  // Для «Расходных материалов» (warehouse_or_norm): факт со склада, норматив из настроек
+  // и какой из них попал в расчёт (берётся больший).
+  detail?: { fact: number; norm: number; method: 'факт' | 'норматив' };
 }
 
 export interface TraceLine {
@@ -229,13 +232,16 @@ export function calcPayout(input: CalcInput): CalcOutput {
   const lines: ComponentLine[] = [];
   for (const c of scheme.components) {
     if (!c.enabled) continue;
-    lines.push({
-      code: c.code,
-      label: c.label ?? SYSTEM_COMPONENT_META[c.code]?.label ?? c.code,
-      stage: c.stage,
-      direction: c.direction,
-      amount: componentAmount(c, ctx),
-    });
+    const label = c.label ?? SYSTEM_COMPONENT_META[c.code]?.label ?? c.code;
+    if (c.valueSource === 'warehouse_or_norm') {
+      // Материалы: считаем оба способа и берём БОЛЬШИЙ (факт со склада vs норматив).
+      const fact = ctx.materialsFact ?? 0;
+      const norm = ctx.materialNorm ?? 0;
+      const method: 'факт' | 'норматив' = fact >= norm ? 'факт' : 'норматив';
+      lines.push({ code: c.code, label, stage: c.stage, direction: c.direction, amount: Math.max(fact, norm), detail: { fact, norm, method } });
+    } else {
+      lines.push({ code: c.code, label, stage: c.stage, direction: c.direction, amount: componentAmount(c, ctx) });
+    }
   }
   // Вычет уменьшает базу/выплату, начисление — увеличивает.
   const signed = (l: ComponentLine) => (l.direction === 'deduction' ? l.amount : -l.amount);
@@ -248,14 +254,16 @@ export function calcPayout(input: CalcInput): CalcOutput {
 
   // Читаемый след для экрана «Как посчитано».
   const trace: TraceLine[] = [];
+  const detailNote = (l: ComponentLine) =>
+    l.detail ? `факт ${l.detail.fact} / норматив ${l.detail.norm} → по ${l.detail.method === 'факт' ? 'факту' : 'нормативу'}` : undefined;
   trace.push({ label: 'База начисления', value: base, note: `операция ${num(operation.cost)} + наркоз ${num(operation.anesthesiaCost)}` });
   for (const l of lines.filter((x) => x.stage === 'before_share')) {
-    trace.push({ label: `${l.direction === 'deduction' ? '−' : '+'} ${l.label}`, value: l.amount });
+    trace.push({ label: `${l.direction === 'deduction' ? '−' : '+'} ${l.label}`, value: l.amount, note: detailNote(l) });
   }
   trace.push({ label: 'База для доли', value: baseForShare });
   trace.push({ label: `Доля врача ${Math.round(sharePct * 10000) / 100}%`, value: round2(baseForShare * sharePct) });
   for (const l of lines.filter((x) => x.stage === 'after_share')) {
-    trace.push({ label: `${l.direction === 'deduction' ? '−' : '+'} ${l.label}`, value: l.amount });
+    trace.push({ label: `${l.direction === 'deduction' ? '−' : '+'} ${l.label}`, value: l.amount, note: detailNote(l) });
   }
   trace.push({ label: 'Итого при 100% оплате', value: round2(amountFull) });
 

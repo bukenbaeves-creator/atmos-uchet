@@ -61,23 +61,32 @@ router.get(
       idx += 1;
       const reg = await getSheetRegistry(id, l.payeeId);
       const ws = wb.addWorksheet(safeSheetName(`${idx}. ${l.payee?.fio ?? 'врач ' + l.payeeId}`));
+      const hasMaterials = reg.columns.some((c) => c.code === 'materials_fact');
       ws.columns = [
         { header: 'Дата', key: 'date', width: 12 },
         { header: 'Пациент', key: 'patient', width: 26 },
         { header: 'Вид операции', key: 'opType', width: 20 },
         { header: 'База', key: 'base', width: 14 },
         ...reg.columns.map((c) => ({ header: c.label, key: `c_${c.code}`, width: 16 })),
+        ...(hasMaterials ? [{ header: 'Метод расхода', key: 'method', width: 16 }] : []),
         { header: 'Доля', key: 'share', width: 9 },
         { header: 'Начислено', key: 'amount', width: 16 },
       ];
       ws.getRow(1).font = { bold: true };
       ws.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
 
-      // Буквы колонок для формул.
+      // Выражение вычетов стадии для формулы: обычные компоненты складываются, а материалы
+      // берутся как MAX(факт; норматив) — в расчёт идёт больший.
       const baseCol = ws.getColumn('base').letter;
       const shareCol = ws.getColumn('share').letter;
-      const beforeLetters = reg.columns.filter((c) => c.stage === 'before_share').map((c) => ws.getColumn(`c_${c.code}`).letter);
-      const afterLetters = reg.columns.filter((c) => c.stage === 'after_share').map((c) => ws.getColumn(`c_${c.code}`).letter);
+      const stageExpr = (stage: string, rn: number): string => {
+        const cols = reg.columns.filter((c) => c.stage === stage);
+        const parts = cols.filter((c) => c.code !== 'materials_fact' && c.code !== 'materials_norm').map((c) => `${ws.getColumn(`c_${c.code}`).letter}${rn}`);
+        const f = cols.find((c) => c.code === 'materials_fact');
+        const nrm = cols.find((c) => c.code === 'materials_norm');
+        if (f && nrm) parts.push(`MAX(${ws.getColumn('c_materials_fact').letter}${rn},${ws.getColumn('c_materials_norm').letter}${rn})`);
+        return parts.length ? parts.join('+') : '0';
+      };
 
       let rn = 1; // строка шапки
       for (const row of reg.rows) {
@@ -88,12 +97,11 @@ router.get(
           opType: row.opType ?? '',
           base: row.base,
           share: row.sharePct,
+          method: row.materialsMethod ? (row.materialsMethod === 'факт' ? 'по факту' : 'по нормативу') : '',
         });
         for (const c of reg.columns) xr.getCell(`c_${c.code}`).value = row.components[c.code] ?? 0;
         // Начислено = (База − Σ вычетов до доли) × Доля − Σ вычетов после доли.
-        const before = beforeLetters.map((L) => `${L}${rn}`).join('+') || '0';
-        const after = afterLetters.map((L) => `${L}${rn}`).join('+') || '0';
-        const formula = `(${baseCol}${rn}-(${before}))*${shareCol}${rn}-(${after})`;
+        const formula = `(${baseCol}${rn}-(${stageExpr('before_share', rn)}))*${shareCol}${rn}-(${stageExpr('after_share', rn)})`;
         xr.getCell('amount').value = { formula, result: row.amount };
       }
       // Итоги (=SUM) по числовым колонкам.

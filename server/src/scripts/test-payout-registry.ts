@@ -86,7 +86,7 @@ async function main() {
   const reg = await getSheetRegistry(sheet.id, payee.id);
   const codes = reg.columns.map((c) => c.code);
   check('есть колонка «Аренда дня» (day_rent)', codes.includes('day_rent'));
-  check('есть «Наркоз» и «Расходники»', codes.includes('anesthesia') && codes.includes('materials'));
+  check('есть «Наркоз» и «Расходники» (факт+норматив)', codes.includes('anesthesia') && codes.includes('materials_fact') && codes.includes('materials_norm'));
   check('НЕТ колонки «Импланты»', !codes.includes('implants'));
   check('НЕТ колонки «Медсестра» (assistant)', !codes.includes('assistant'));
   const dr = reg.columns.find((c) => c.code === 'day_rent');
