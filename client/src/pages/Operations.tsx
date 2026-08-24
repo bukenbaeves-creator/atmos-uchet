@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import dayjs from 'dayjs';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { JournalPage } from '../components/JournalPage';
 import { apiGet, apiPatch, ApiError } from '../api/client';
@@ -32,7 +33,7 @@ interface Participant {
 
 interface Operation {
   id: number;
-  patient?: { fio: string };
+  patient?: { id: number; fio: string };
   dateOp: string | null;
   opType: string | null;
   surgeon: string | null;
@@ -79,6 +80,7 @@ const fields: Field[] = [
 export function Operations() {
   const { data: dict } = useDictionaries();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
   const [rescheduleFor, setRescheduleFor] = useState<Operation | null>(null);
   const opt = (arr?: { id: number; label: string }[]) => (arr ?? []).map((o) => ({ value: o.label, label: o.label }));
@@ -221,7 +223,8 @@ export function Operations() {
       <JournalPage<Operation>
         entity="operations"
         title="Операции"
-        subtitle="Стоимость, оплата и остаток рассчитываются автоматически. Оператор правит запись до «дата операции + 1 день». Дата — только через «Перенести дату»."
+        subtitle="Стоимость, оплата и остаток рассчитываются автоматически. Оператор правит запись до «дата операции + 1 день». Дата — только через «Перенести дату». Клик по строке — карточка пациента."
+        onRowClick={(o) => o.patient && navigate(`/patients/${o.patient.id}`)}
         columns={columns}
         fields={fields}
         exportJournal="operations"
