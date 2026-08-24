@@ -191,7 +191,11 @@ function componentAmount(c: CalcComponentInput, ctx: Ctx, pctBase: number): numb
       // useOwnValue → процент из value применяется ко ВСЕЙ сумме платежей (переопределение);
       // иначе — ставка терминала на дату по каждому платежу.
       if (c.useOwnValue) return ctx.totalPayments * (num(c.value) / 100);
-      return ctx.payments.reduce((s, p) => s + p.amount * (resolveAcquiringRate(ctx.rates, p.terminal, p.date) / 100), 0);
+      // Платёж без терминала (наличные) — комиссии нет: 0, а не ошибка «нет ставки».
+      return ctx.payments.reduce(
+        (s, p) => s + (p.terminal?.trim() ? p.amount * (resolveAcquiringRate(ctx.rates, p.terminal, p.date) / 100) : 0),
+        0,
+      );
     case 'pct_of_base':
       // «до доли» → % от базы; «после доли» → % от доли врача (pctBase подставляется вызовом).
       return pctBase * (num(c.value) / 100);
