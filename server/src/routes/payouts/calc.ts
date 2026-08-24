@@ -84,6 +84,18 @@ router.post(
       }
     }
     const ops = await prisma.operation.findMany({ where, select: { id: true } });
+
+    // Хирурги операций периода, не привязанные ни к одному получателю (метка справочника
+    // не совпала) — до расчёта такие операции не доходят, сообщаем отдельно.
+    if (!d.operationIds?.length) {
+      const unmatchedWhere: Record<string, unknown> = { deletedAt: null, surgeon: { notIn: labels.length ? labels : [''] }, participants: { none: {} } };
+      if (where.dateOp) unmatchedWhere.dateOp = where.dateOp;
+      const unmatched = await prisma.operation.groupBy({ by: ['surgeon'], where: unmatchedWhere, _count: { _all: true } });
+      for (const u of unmatched) {
+        if (!u.surgeon) continue;
+        for (let i = 0; i < u._count._all; i++) rctx.errors.push({ operationId: 0, message: `Хирург «${u.surgeon}» не привязан ни к одному получателю (проверьте «Врач из справочника» у получателя)` });
+      }
+    }
     for (const o of ops) {
       await prisma.$transaction((tx) => recalcOperation(o.id, tx, rctx));
     }

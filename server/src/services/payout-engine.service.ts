@@ -105,6 +105,7 @@ export interface RecalcContext {
   acquiringRates?: AcquiringRateInput[];
   componentsById?: Map<number, ComponentRow>;
   payeesByLabel?: Map<string, number>; // dictionaryLabel → payeeId (для вывода из Operation.surgeon)
+  payeeNames?: Map<number, string>; // payeeId → ФИО (для понятных причин пропуска)
   errors?: { operationId: number; message: string }[]; // причины пропуска расчёта (для сводки пересчёта)
 }
 
@@ -197,6 +198,14 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   const paidTotal = payments.reduce((s, p) => s + (p.direction === 'refund' ? -1 : 1) * toNum(p.amount), 0);
   // База 0 (стоимость не заполнена) — права нет: иначе фиксы схемы дают минусовые начисления.
   const fullyPaid = base > 0 && paidTotal + 0.005 >= base;
+  // Причина пропуска — для сводки кнопки «Пересчитать» (чтобы было понятно, почему
+  // врача нет в ведомости). Одна запись на операцию.
+  if (!fullyPaid) {
+    ctx?.errors?.push({
+      operationId: op.id,
+      message: base > 0 ? 'Операция не оплачена на 100% — права на выплату пока нет' : 'У операции не заполнена стоимость (база 0)',
+    });
+  }
   let closingDate: Date | null = null; // дата платежа, закрывшего 100%
   let closingId: number | null = null;
   if (fullyPaid) {
@@ -215,7 +224,13 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   for (const part of effective) {
    try {
     const scheme = await getSchemeForDate(part.payeeId, op.dateOp, tx);
-    if (!scheme) continue; // нет схемы → «Сигналы» (см. Э2-4/дашборд)
+    if (!scheme) {
+      // Нет действующей схемы — понятная причина в сводку пересчёта.
+      let fio = ctx?.payeeNames?.get(part.payeeId);
+      if (!fio) fio = (await tx.doctorPayee.findUnique({ where: { id: part.payeeId }, select: { fio: true } }))?.fio ?? `#${part.payeeId}`;
+      ctx?.errors?.push({ operationId: op.id, message: `Нет действующей схемы у «${fio}» на дату операции (проверьте «Действует с»)` });
+      continue;
+    }
 
     // Анестезиолог (тариф): одно начисление на операцию по НИЖНЕЙ ставке — тоже только
     // после проведения и полной оплаты. Ступень месяца — при утверждении месячной ведомости.
@@ -334,8 +349,10 @@ export async function loadRecalcContext(tx: PrismaClientOrTx): Promise<RecalcCon
     (await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]),
   );
   const payeesByLabel = new Map<string, number>();
-  for (const p of await tx.doctorPayee.findMany({ where: { deletedAt: null, active: true, dictionaryLabel: { not: null } }, select: { id: true, dictionaryLabel: true } })) {
-    if (p.dictionaryLabel) payeesByLabel.set(p.dictionaryLabel.trim(), p.id);
+  const payeeNames = new Map<number, string>();
+  for (const p of await tx.doctorPayee.findMany({ where: { deletedAt: null }, select: { id: true, fio: true, dictionaryLabel: true, active: true } })) {
+    payeeNames.set(p.id, p.fio);
+    if (p.active && p.dictionaryLabel) payeesByLabel.set(p.dictionaryLabel.trim(), p.id);
   }
-  return { acquiringRates, componentsById, payeesByLabel };
+  return { acquiringRates, componentsById, payeesByLabel, payeeNames };
 }
