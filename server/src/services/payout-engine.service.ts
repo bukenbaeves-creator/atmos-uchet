@@ -42,6 +42,7 @@ export function buildCalcScheme(dbScheme: Record<string, any>, componentsById: M
       enabled: it.enabled,
       useOwnValue: it.useOwnValue,
       value: it.value == null ? null : Number(it.value),
+      mode: (it.filter && typeof it.filter === 'object' ? (it.filter as { mode?: 'card' | 'fixed' | 'table' }).mode : undefined) ?? undefined,
     };
   });
   return {
@@ -99,6 +100,26 @@ async function syncTariffAccrual(
   for (const e of existing) if (e.triggerPaymentId !== null && e.status === 'free') await tx.payoutAccrual.delete({ where: { id: e.id } });
 }
 
+// Строки таблиц «вид операции → сумма» (ComponentTableValue, глобальные — schemeId null).
+export type TableRow = { code: string; key: string; value: number; validFrom: Date };
+export async function loadTableRows(tx: PrismaClientOrTx): Promise<TableRow[]> {
+  const rows = await tx.componentTableValue.findMany({ where: { schemeId: null }, include: { component: { select: { code: true } } } });
+  return rows.map((r) => ({ code: r.component.code, key: r.key, value: Number(r.value), validFrom: r.validFrom }));
+}
+// Таблицы, действующие на дату операции: последняя запись (validFrom ≤ date) на (код, ключ).
+export function opTypeTablesFor(rows: TableRow[], date: Date): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  const best = new Map<string, TableRow>();
+  for (const r of rows) {
+    if (r.validFrom.getTime() > date.getTime()) continue;
+    const k = `${r.code}|${r.key}`;
+    const cur = best.get(k);
+    if (!cur || r.validFrom.getTime() > cur.validFrom.getTime()) best.set(k, r);
+  }
+  for (const r of best.values()) (out[r.code] ??= {})[r.key] = r.value;
+  return out;
+}
+
 // Преднагруженный справочный контекст для массового пересчёта («данные читать пакетно»):
 // ставки и компоненты одинаковы для всех операций, поэтому их можно загрузить один раз.
 export interface RecalcContext {
@@ -106,6 +127,7 @@ export interface RecalcContext {
   componentsById?: Map<number, ComponentRow>;
   payeesByLabel?: Map<string, number>; // dictionaryLabel → payeeId (для вывода из Operation.surgeon)
   payeeNames?: Map<number, string>; // payeeId → ФИО (для понятных причин пропуска)
+  opTypeTableRows?: TableRow[]; // таблицы «вид операции → сумма» (наркоз, седация, …)
   errors?: { operationId: number; message: string }[]; // причины пропуска расчёта (для сводки пересчёта)
 }
 
@@ -172,6 +194,7 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   const componentsById =
     ctx?.componentsById ??
     new Map<number, ComponentRow>((await tx.calcComponent.findMany({})).map((c) => [c.id, c as unknown as ComponentRow]));
+  const opTypeTables = opTypeTablesFor(ctx?.opTypeTableRows ?? (await loadTableRows(tx)), op.dateOp);
 
   // Платежи по возрастанию даты (при равенстве — по id).
   const payments = [...op.payments].sort((a, b) => {
@@ -258,8 +281,9 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
         terminal: x.terminal,
         date: x.date ? toISODate(x.date) : operationInput.dateOp,
         direction: (x.direction as 'payment' | 'refund') ?? 'payment',
+        payMethod: x.payMethod,
       }));
-      const calc = calcPayout({ operation: operationInput, payments: allPayments, scheme: calcScheme, acquiringRates, materialsFact, materialNorm });
+      const calc = calcPayout({ operation: operationInput, payments: allPayments, scheme: calcScheme, acquiringRates, materialsFact, materialNorm, opTypeTables });
       target = round2(calc.amountFull);
       lastSharePct = calc.sharePct;
 
@@ -354,5 +378,6 @@ export async function loadRecalcContext(tx: PrismaClientOrTx): Promise<RecalcCon
     payeeNames.set(p.id, p.fio);
     if (p.active && p.dictionaryLabel) payeesByLabel.set(p.dictionaryLabel.trim(), p.id);
   }
-  return { acquiringRates, componentsById, payeesByLabel, payeeNames };
+  const opTypeTableRows = await loadTableRows(tx);
+  return { acquiringRates, componentsById, payeesByLabel, payeeNames, opTypeTableRows };
 }

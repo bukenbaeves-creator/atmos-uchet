@@ -132,7 +132,9 @@ export const PAYOUT_COMPONENTS: {
   operationField: string | null;
 }[] = [
   { code: 'acquiring', name: 'Комиссия банка', valueSource: 'pct_of_payments', direction: 'deduction', defaultStage: 'before_share', operationField: null },
-  { code: 'anesthesia', name: 'Наркоз / седация', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'anesthesiaCost' },
+  { code: 'anesthesia', name: 'Наркоз (общий)', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'anesthesiaCost' },
+  // Седация — отдельный вид анестезии со своей ценой: сумма по таблице «вид операции → сумма».
+  { code: 'sedation', name: 'Седация', valueSource: 'table_by_op_type', direction: 'deduction', defaultStage: 'before_share', operationField: null },
   { code: 'implants', name: 'Импланты', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'implantsCost' },
   { code: 'materials', name: 'Расходные материалы', valueSource: 'warehouse_or_norm', direction: 'deduction', defaultStage: 'before_share', operationField: null },
   { code: 'assistant', name: 'Медсестра / ассистент', valueSource: 'operation_field', direction: 'deduction', defaultStage: 'before_share', operationField: 'assistantCost' },
@@ -155,3 +157,6 @@ export const DICTIONARY_SEED: Record<string, string[]> = {
   zapis: ZAPIS,
   manager: MANAGERS,
 };
+
+// Способ оплаты, при котором банк берёт комиссию эквайринга (остальные — без комиссии).
+export const TERMINAL_METHOD = 'Через терминал';

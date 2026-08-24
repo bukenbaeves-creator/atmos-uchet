@@ -1,5 +1,6 @@
 import { round2 } from './compute.js';
 import { badRequest } from '../lib/http.js';
+import { TERMINAL_METHOD } from '../constants.js';
 
 // ===================== Чистая функция расчёта выплаты (Э2-1) =====================
 // Без обращения к БД: всё приходит параметрами — функция полностью тестируема.
@@ -33,6 +34,9 @@ export interface CalcComponentInput {
   enabled: boolean;
   useOwnValue?: boolean;
   value?: number | null; // процент или сумма — в зависимости от источника
+  // Режим значения: card — из карточки операции, fixed — фикс из схемы, table — по таблице
+  // «вид операции → сумма» (ComponentTableValue). Для table_by_op_type по умолчанию table.
+  mode?: 'card' | 'fixed' | 'table';
 }
 
 export interface CalcOperation {
@@ -50,6 +54,7 @@ export interface CalcPayment {
   terminal: string | null;
   date: string; // YYYY-MM-DD
   direction?: 'payment' | 'refund';
+  payMethod?: string | null; // «Через терминал» — единственный способ с комиссией банка
 }
 
 export interface AcquiringRateInput {
@@ -74,6 +79,8 @@ export interface CalcInput {
   acquiringRates: AcquiringRateInput[];
   materialsFact: number | null;
   materialNorm: number | null;
+  // Таблицы «вид операции → сумма» по коду компонента (наркоз, седация, …).
+  opTypeTables?: Record<string, Record<string, number>>;
 }
 
 export interface ComponentLine {
@@ -178,10 +185,16 @@ interface Ctx {
   operation: CalcOperation;
   payments: CalcPayment[];
   totalPayments: number;
+  terminalPayments: CalcPayment[]; // только «Через терминал» — облагаются комиссией
+  terminalTotal: number;
   materialsFact: number | null;
   materialNorm: number | null;
   rates: AcquiringRateInput[];
+  opTypeTables: Record<string, Record<string, number>>;
 }
+
+// Сумма из таблицы «вид операции → сумма» для компонента; вид не в таблице → 0.
+const tableAmount = (ctx: Ctx, code: string): number => ctx.opTypeTables[code]?.[ctx.operation.opType ?? ''] ?? 0;
 
 // Сумма одного компонента по его источнику значения.
 // pctBase — база для «pct_of_base»: до доли это база начисления, после доли — сумма доли врача.
@@ -190,9 +203,10 @@ function componentAmount(c: CalcComponentInput, ctx: Ctx, pctBase: number): numb
     case 'pct_of_payments':
       // useOwnValue → процент из value применяется ко ВСЕЙ сумме платежей (переопределение);
       // иначе — ставка терминала на дату по каждому платежу.
-      if (c.useOwnValue) return ctx.totalPayments * (num(c.value) / 100);
-      // Платёж без терминала (наличные) — комиссии нет: 0, а не ошибка «нет ставки».
-      return ctx.payments.reduce(
+      // Комиссия — только с платежей «Через терминал» (наличные/на счёт/рассрочка — без).
+      // Свой % схемы — единый процент на эти платежи вместо ставок терминалов.
+      if (c.useOwnValue) return ctx.terminalTotal * (num(c.value) / 100);
+      return ctx.terminalPayments.reduce(
         (s, p) => s + (p.terminal?.trim() ? p.amount * (resolveAcquiringRate(ctx.rates, p.terminal, p.date) / 100) : 0),
         0,
       );
@@ -200,7 +214,8 @@ function componentAmount(c: CalcComponentInput, ctx: Ctx, pctBase: number): numb
       // «до доли» → % от базы; «после доли» → % от доли врача (pctBase подставляется вызовом).
       return pctBase * (num(c.value) / 100);
     case 'operation_field':
-      // Вписана сумма в схеме (useOwnValue) → фикс; иначе — из карточки операции.
+      // Режимы: по таблице видов операций / фикс из схемы / из карточки операции.
+      if (c.mode === 'table') return tableAmount(ctx, c.code);
       return c.useOwnValue ? num(c.value) : num((ctx.operation as unknown as Record<string, unknown>)[c.operationField ?? '']);
     case 'warehouse_or_norm':
       return ctx.materialsFact ?? ctx.materialNorm ?? 0;
@@ -212,7 +227,8 @@ function componentAmount(c: CalcComponentInput, ctx: Ctx, pctBase: number): numb
       // Таблица «источник → значение» вводится в схеме; в тестах — через useOwnValue.
       return num(c.value);
     case 'table_by_op_type':
-      return num(c.value);
+      // Фикс из схемы (useOwnValue) либо таблица «вид операции → сумма».
+      return c.useOwnValue ? num(c.value) : tableAmount(ctx, c.code);
     case 'fixed':
     case 'manual':
       return num(c.value);
@@ -226,14 +242,20 @@ export function calcPayout(input: CalcInput): CalcOutput {
   const base = num(operation.cost) + num(operation.anesthesiaCost);
   const payments = input.payments.filter((p) => (p.direction ?? 'payment') === 'payment');
   const totalPayments = payments.reduce((s, p) => s + p.amount, 0);
+  // Облагаемые комиссией: способ «Через терминал»; если способ не задан (старые данные) —
+  // по наличию терминала.
+  const terminalPayments = payments.filter((p) => (p.payMethod ? p.payMethod === TERMINAL_METHOD : !!p.terminal?.trim()));
   const ctx: Ctx = {
     base,
     operation,
     payments,
     totalPayments,
+    terminalPayments,
+    terminalTotal: terminalPayments.reduce((s, p) => s + p.amount, 0),
     materialsFact: input.materialsFact,
     materialNorm: input.materialNorm,
     rates: input.acquiringRates,
+    opTypeTables: input.opTypeTables ?? {},
   };
 
   // Строка компонента; pctBase — база для процентных вычетов «pct_of_base».

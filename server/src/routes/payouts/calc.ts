@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma.js';
 import { asyncHandler, badRequest } from '../../lib/http.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireAdmin } from '../../middleware/rbac.js';
-import { recalcOperation, buildCalcScheme, loadRecalcContext } from '../../services/payout-engine.service.js';
+import { recalcOperation, buildCalcScheme, loadRecalcContext, loadTableRows, opTypeTablesFor } from '../../services/payout-engine.service.js';
 import { calcPayout, SYSTEM_COMPONENT_META, type CalcScheme, type AcquiringRateInput } from '../../services/payout-calc.service.js';
 import { getSchemeForDate } from '../../services/payout-scheme.service.js';
 import { serialize } from '../../lib/serialize.js';
@@ -158,6 +158,7 @@ router.post(
       validFrom: iso(r.validFrom),
     }));
     const componentsById = new Map((await prisma.calcComponent.findMany({})).map((c) => [c.id, c as never]));
+    const tableRows = await loadTableRows(prisma);
 
     const proposed: CalcScheme = {
       kind: d.proposed.kind,
@@ -200,7 +201,9 @@ router.post(
         terminal: p.terminal,
         date: p.date ? iso(p.date) : operation.dateOp,
         direction: (p.direction as 'payment' | 'refund') ?? 'payment',
+        payMethod: p.payMethod,
       }));
+      const opTypeTables = opTypeTablesFor(tableRows, op.dateOp);
       const materialsFact = op.writeoffs.length ? op.writeoffs.reduce((s, w) => s + Number(w.costTotal), 0) : null;
       let materialNorm: number | null = null;
       if (op.opType) {
@@ -211,14 +214,14 @@ router.post(
       let before: number | null = null;
       try {
         if (current && current.kind === 'share_based') {
-          before = calcPayout({ operation, payments, scheme: buildCalcScheme(current as never, componentsById), acquiringRates, materialsFact, materialNorm }).amountFull;
+          before = calcPayout({ operation, payments, scheme: buildCalcScheme(current as never, componentsById), acquiringRates, materialsFact, materialNorm, opTypeTables }).amountFull;
         }
       } catch {
         before = null;
       }
       let after: number | null = null;
       try {
-        after = calcPayout({ operation, payments, scheme: proposed, acquiringRates, materialsFact, materialNorm }).amountFull;
+        after = calcPayout({ operation, payments, scheme: proposed, acquiringRates, materialsFact, materialNorm, opTypeTables }).amountFull;
       } catch {
         after = null;
       }

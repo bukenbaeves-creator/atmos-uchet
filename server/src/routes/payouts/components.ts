@@ -7,7 +7,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { requireAdmin } from '../../middleware/rbac.js';
 import { writeAudit } from '../../services/audit.service.js';
 import { serialize } from '../../lib/serialize.js';
-import { requiredString, optionalString } from '../../schemas.js';
+import { requiredString, optionalString, requiredDate } from '../../schemas.js';
 
 // Компоненты расчёта выплат. У модели CalcComponent НЕТ deletedAt — фабрика не
 // подходит, ручной роутер. Только администратор. Системные (isSystem) удалить нельзя,
@@ -88,6 +88,34 @@ router.delete(
     await prisma.calcComponent.delete({ where: { id } });
     await writeAudit(req, { action: 'delete', entity: 'calc_component', entityId: id, before });
     res.json({ deleted: true });
+  }),
+);
+
+// ---------- Таблица «вид операции → сумма» компонента (наркоз, седация, …) ----------
+// Глобальная (schemeId null), append-only: изменение = новая запись с новой validFrom.
+router.get(
+  '/:id/table',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const rows = await prisma.componentTableValue.findMany({ where: { componentId: id, schemeId: null }, orderBy: [{ key: 'asc' }, { validFrom: 'desc' }] });
+    res.json({ items: serialize(rows) });
+  }),
+);
+const tableRowSchema = z.object({
+  key: requiredString('Укажите вид операции', 200),
+  value: z.coerce.number({ invalid_type_error: 'Сумма должна быть числом' }).min(0),
+  validFrom: requiredDate('Укажите дату начала действия'),
+});
+router.post(
+  '/:id/table',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const comp = await prisma.calcComponent.findUnique({ where: { id } });
+    if (!comp) throw notFound('Компонент не найден');
+    const d = tableRowSchema.parse(req.body);
+    const created = await prisma.componentTableValue.create({ data: { componentId: id, schemeId: null, key: d.key, value: d.value, validFrom: d.validFrom } });
+    await writeAudit(req, { action: 'create', entity: 'component_table_value', entityId: created.id, after: created });
+    res.status(201).json(serialize(created));
   }),
 );
 

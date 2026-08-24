@@ -51,6 +51,48 @@ const taxBefore = calc([comp('operation_tax', { useOwnValue: true, value: 4, sta
 check('налог 4% «до доли» → 4 (от базы 100)', amt(taxBefore, 'operation_tax') === 4);
 check('итог = 48 ((100 − 4) × 0.5)', taxBefore.amountFull === 48);
 
+console.log('\n=== Таблицы «вид операции → сумма»: наркоз и седация ===');
+const tables = { anesthesia: { 'Маммопластика': 250000 }, sedation: { 'Блефаропластика верхняя': 80000 } };
+const tblCalc = (opType: string, comps: CalcComponentInput[]) =>
+  calcPayout({
+    operation: { cost: 1000000, anesthesiaCost: 0, implantsCost: 0, assistantCost: 0, zapis: 'X', opType, dateOp: '2026-01-01' },
+    payments: [{ amount: 1000000, terminal: 'Каспи Т1', date: '2026-01-01', direction: 'payment', payMethod: 'Через терминал' }],
+    scheme: { kind: 'share_based', shareMode: 'constant', shareValue: 0.5, components: comps },
+    acquiringRates: [{ terminal: 'Каспи Т1', ratePct: 1.5, validFrom: '2020-01-01' }],
+    materialsFact: null,
+    materialNorm: null,
+    opTypeTables: tables,
+  });
+const anesT = comp('anesthesia', { mode: 'table', stage: 'before_share' });
+const sedT: CalcComponentInput = { code: 'sedation', label: 'Седация', valueSource: 'table_by_op_type', direction: 'deduction', operationField: null, stage: 'before_share', enabled: true, useOwnValue: false, value: null };
+const mammo = tblCalc('Маммопластика', [anesT, sedT]);
+check('маммопластика: наркоз по таблице = 250 000', amt(mammo, 'anesthesia') === 250000);
+check('маммопластика: седации нет = 0', amt(mammo, 'sedation') === 0);
+const blef = tblCalc('Блефаропластика верхняя', [anesT, sedT]);
+check('блефаропластика: наркоза нет = 0', amt(blef, 'anesthesia') === 0);
+check('блефаропластика: седация по таблице = 80 000', amt(blef, 'sedation') === 80000);
+const oto = tblCalc('Отопластика', [anesT, sedT]);
+check('отопластика (нет в таблицах): 0 и 0', amt(oto, 'anesthesia') === 0 && amt(oto, 'sedation') === 0);
+
+console.log('\n=== Комиссия банка: только платежи «Через терминал» ===');
+const commCalc = (payments: { amount: number; terminal: string | null; payMethod: string | null }[], own?: number) =>
+  calcPayout({
+    operation: { cost: 1000000, anesthesiaCost: 0, implantsCost: 0, assistantCost: 0, zapis: 'X', opType: 'Y', dateOp: '2026-01-01' },
+    payments: payments.map((p) => ({ ...p, date: '2026-01-01', direction: 'payment' as const })),
+    scheme: { kind: 'share_based', shareMode: 'constant', shareValue: 0.5, components: [comp('acquiring', { useOwnValue: own != null, value: own ?? null })] },
+    acquiringRates: [{ terminal: 'Каспи Т1', ratePct: 1.5, validFrom: '2020-01-01' }],
+    materialsFact: null,
+    materialNorm: null,
+  });
+const cashWithTerminal = commCalc([{ amount: 1000000, terminal: 'Каспи Т1', payMethod: 'Наличные' }]);
+check('«Наличные» с указанным терминалом → комиссия 0', amt(cashWithTerminal, 'acquiring') === 0);
+const viaTerminal = commCalc([{ amount: 1000000, terminal: 'Каспи Т1', payMethod: 'Через терминал' }]);
+check('«Через терминал» → 1.5% = 15 000', amt(viaTerminal, 'acquiring') === 15000);
+const mixedOwn = commCalc([{ amount: 600000, terminal: 'Каспи Т1', payMethod: 'Через терминал' }, { amount: 400000, terminal: null, payMethod: 'Наличные' }], 2);
+check('свой 2% — только на терминальные 600 000 = 12 000', amt(mixedOwn, 'acquiring') === 12000);
+const legacy = commCalc([{ amount: 1000000, terminal: 'Каспи Т1', payMethod: null }]);
+check('способ не задан, терминал есть (старые данные) → по ставке 15 000', amt(legacy, 'acquiring') === 15000);
+
 if (failed) {
   console.error(`\nПРОВАЛЕНО проверок: ${failed}`);
   process.exit(1);

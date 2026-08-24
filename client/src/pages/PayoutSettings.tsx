@@ -156,6 +156,8 @@ function PayeesTab() {
 interface Comp { id: number; code: string; name: string; valueSource: string; direction: string; defaultStage: string; isSystem: boolean; isActive: boolean; }
 function ComponentsTab() {
   const { data, isLoading, isError } = useItems<Comp>('payout-components', '/payouts/components');
+  const [tableFor, setTableFor] = useState<Comp | null>(null);
+  const hasTable = (c: Comp) => c.valueSource === 'operation_field' || c.valueSource === 'table_by_op_type';
   const columns: Column<Comp>[] = [
     { header: 'Компонент', cell: (c) => <span className="font-medium">{c.name}</span> },
     { header: 'Код', cell: (c) => <code className="text-xs text-slate-500">{c.code}</code> },
@@ -164,13 +166,75 @@ function ComponentsTab() {
     { header: 'Стадия', cell: (c) => STAGE_LABEL[c.defaultStage] ?? c.defaultStage },
     { header: 'Тип', cell: (c) => (c.isSystem ? <Badge tone="blue">системный</Badge> : <Badge tone="slate">свой</Badge>) },
     { header: 'Статус', cell: (c) => (c.isActive ? <Badge tone="green">активен</Badge> : <Badge tone="amber">выключен</Badge>) },
+    {
+      header: '',
+      align: 'right',
+      cell: (c) =>
+        hasTable(c) ? (
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setTableFor(c)}>Таблица по видам операций</button>
+        ) : null,
+    },
   ];
   return (
     <div>
-      <p className="mb-3 text-sm text-slate-500">Системные компоненты созданы автоматически и используются в схемах. Собственные компоненты добавятся на следующих этапах.</p>
+      <p className="mb-3 text-sm text-slate-500">
+        Системные компоненты созданы автоматически. У наркоза, седации, имплантов и медсестры можно задать таблицу
+        «вид операции → сумма» — она общая для всех врачей; в схеме врача выбирается режим «по таблице».
+      </p>
       <TabShell isLoading={isLoading} isError={isError} empty={!data || data.items.length === 0}>
         <Table columns={columns} rows={data?.items ?? []} />
       </TabShell>
+      <Modal open={tableFor != null} onClose={() => setTableFor(null)} title={`Таблица по видам операций · ${tableFor?.name ?? ''}`} wide>
+        {tableFor && <ComponentTableEditor comp={tableFor} />}
+      </Modal>
+    </div>
+  );
+}
+
+// Таблица «вид операции → сумма» компонента: общая для всех врачей, append-only
+// (изменение = новая строка с новой датой). Вид операции не в таблице — вычета нет.
+interface TableRow { id: number; key: string; value: number; validFrom: string }
+function ComponentTableEditor({ comp }: { comp: Comp }) {
+  const qc = useQueryClient();
+  const key = ['payout-component-table', comp.id];
+  const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => apiGet<{ items: TableRow[] }>(`/payouts/components/${comp.id}/table`) });
+  const [form, setForm] = useState({ key: '', value: '', validFrom: '2020-01-01' });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setErr(null); setBusy(true);
+    try {
+      await apiPost(`/payouts/components/${comp.id}/table`, { key: form.key, value: Number(String(form.value).replace(/\s/g, '').replace(',', '.')), validFrom: form.validFrom });
+      qc.invalidateQueries({ queryKey: key });
+      setForm({ key: '', value: '', validFrom: '2020-01-01' });
+    } catch (x) { setErr(x instanceof ApiError ? x.message : 'Не удалось сохранить'); } finally { setBusy(false); }
+  };
+  // Показываем действующие значения (последняя дата по каждому виду операции).
+  const items = data?.items ?? [];
+  const latest = new Map<string, TableRow>();
+  for (const r of items) if (!latest.has(r.key)) latest.set(r.key, r);
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-500">Сумма вычета по виду операции. Виды, которых нет в таблице, вычета не дают (напр. блефаропластика без наркоза).</p>
+      <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+        <div className="sm:col-span-2"><label className="label">Вид операции</label><DictSelect category="op_type" value={form.key} onChange={(v) => setForm({ ...form, key: v })} required /></div>
+        <div><label className="label">Сумма, ₸</label><input className="input" placeholder="напр. 250000" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} required /></div>
+        <div><label className="label">Действует с</label><input type="date" className="input" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} required /></div>
+        {err && <p className="text-sm text-red-600 sm:col-span-4">{err}</p>}
+        <div className="flex justify-end sm:col-span-4"><button className="btn-primary" disabled={busy}>{busy ? 'Сохранение…' : '+ Добавить / обновить'}</button></div>
+      </form>
+      {isLoading ? <Spinner /> : latest.size === 0 ? (
+        <EmptyState>Таблица пуста — вычет по этому компоненту пока нигде не применяется.</EmptyState>
+      ) : (
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="py-1">Вид операции</th><th className="py-1 text-right">Сумма</th><th className="py-1">Действует с</th></tr></thead>
+          <tbody>
+            {[...latest.values()].map((r) => (
+              <tr key={r.id} className="border-b border-slate-50"><td className="py-1 font-medium">{r.key}</td><td className="py-1 text-right tabular-nums">{fmtMoney(r.value)}</td><td className="py-1">{fmtDate(r.validFrom)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -200,7 +264,11 @@ function AcquiringTab() {
   return (
     <div>
       <div className="mb-3 flex justify-end"><button className="btn-primary" onClick={() => setOpen(true)}>+ Ставка</button></div>
-      <p className="mb-3 text-sm text-slate-500">Изменение ставки — это новая запись с новой датой начала. Старые записи сохраняются для прошлых расчётов.</p>
+      <p className="mb-3 text-sm text-slate-500">
+        Ставки применяются к платежам со способом «Через терминал» — по терминалу платежа. Наличные, «на счёт» и рассрочка
+        комиссией не облагаются. Изменение ставки — новая запись с новой датой; старые сохраняются для прошлых расчётов.
+        Если в схеме врача у «Комиссии банка» вписан свой %, он заменяет эти ставки для этого врача.
+      </p>
       <TabShell isLoading={isLoading} isError={isError} empty={!data || data.items.length === 0}>
         <Table columns={columns} rows={data?.items ?? []} />
       </TabShell>
@@ -315,7 +383,7 @@ function NormsTab() {
 }
 
 // ---------- Схемы выплат (версионные) ----------
-interface SchemeItem { componentId: number; enabled: boolean; stage: string; useOwnValue: boolean; value: number | null }
+interface SchemeItem { componentId: number; enabled: boolean; stage: string; useOwnValue: boolean; value: number | null; filter?: { mode?: string } | null }
 interface SchemeShare { key: string; share: number }
 interface Scheme { id: number; payeeId: number; name: string; kind: string; shareMode: string; shareValue: number | null; withholdIpPct?: number; note?: string | null; version: number; validFrom: string; validTo: string | null; items: SchemeItem[]; shareValues: SchemeShare[]; }
 function SchemesTab() {
@@ -328,7 +396,7 @@ function SchemesTab() {
   const [err, setErr] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ payeeId: '', name: '', kind: 'share_based', shareMode: 'constant', shareValue: '', validFrom: '2020-01-01', note: '' });
   const [shareRows, setShareRows] = useState<{ key: string; share: string }[]>([{ key: '', share: '' }]);
-  const [picked, setPicked] = useState<Record<number, { stage: string; value: string }>>({});
+  const [picked, setPicked] = useState<Record<number, { stage: string; value: string; mode: 'card' | 'fixed' | 'table' }>>({});
 
   const payeeName = (id: number) => payees.data?.items.find((p) => p.id === id)?.fio ?? `#${id}`;
   const reset = () => {
@@ -344,15 +412,24 @@ function SchemesTab() {
       if (s === '') return null;
       return Number(s);
     };
-    const items: { componentId: number; stage: string; useOwnValue: boolean; value: number | null }[] = [];
+    const items: { componentId: number; stage: string; useOwnValue: boolean; value: number | null; filter?: { mode: string } | null }[] = [];
     for (const [componentId, v] of Object.entries(picked)) {
-      const val = parseNum(v.value);
+      const comp = comps.data?.items.find((c) => c.id === Number(componentId));
+      const tableCapable = comp?.valueSource === 'operation_field' || comp?.valueSource === 'table_by_op_type';
+      const val = v.mode === 'fixed' || !tableCapable ? parseNum(v.value) : null;
       if (val !== null && Number.isNaN(val)) {
-        const compName = comps.data?.items.find((c) => c.id === Number(componentId))?.name ?? componentId;
-        setErr(`Значение компонента «${compName}»: «${v.value}» не число. Введите число, например 1.5 (проценты — без знака %).`);
+        setErr(`Значение компонента «${comp?.name ?? componentId}»: «${v.value}» не число. Введите число, например 1.5 (проценты — без знака %).`);
         return;
       }
-      items.push({ componentId: Number(componentId), stage: v.stage, useOwnValue: val !== null, value: val });
+      if (tableCapable && v.mode === 'fixed' && val === null) {
+        setErr(`Компонент «${comp?.name ?? componentId}»: выбран режим «фикс сумма», но сумма не указана.`);
+        return;
+      }
+      items.push({
+        componentId: Number(componentId), stage: v.stage,
+        useOwnValue: val !== null, value: val,
+        filter: tableCapable && v.mode === 'table' ? { mode: 'table' } : null,
+      });
     }
     const shareParsed = parseNum(form.shareValue);
     if (form.shareMode === 'constant' && shareParsed !== null && Number.isNaN(shareParsed)) {
@@ -449,7 +526,9 @@ function SchemesTab() {
                         const vs = c?.valueSource;
                         const isPct = vs === 'pct_of_payments' || vs === 'pct_of_base';
                         let valText = '—';
-                        if (it.useOwnValue && it.value != null) valText = isPct ? `${Number(it.value)}%` : fmtMoney(Number(it.value));
+                        if (it.filter?.mode === 'table') valText = 'по таблице видов операций';
+                        else if (it.useOwnValue && it.value != null) valText = isPct ? `${Number(it.value)}%` : fmtMoney(Number(it.value));
+                        else if (vs === 'table_by_op_type') valText = 'по таблице видов операций';
                         else if (vs === 'operation_field') valText = 'из карточки операции';
                         else if (vs === 'warehouse_or_norm') valText = 'склад / норматив (больший)';
                         else if (vs === 'pct_of_payments') valText = 'ставка терминала';
@@ -524,10 +603,13 @@ function SchemesTab() {
                 const vs = c.valueSource;
                 const isPct = vs === 'pct_of_payments' || vs === 'pct_of_base';
                 const noValue = vs === 'warehouse_or_norm';
+                const tableCapable = vs === 'operation_field' || vs === 'table_by_op_type';
+                const mode = on ? picked[c.id].mode : 'card';
                 const hint =
-                  vs === 'pct_of_payments' ? 'процент от суммы оплат; пусто = ставка терминала на дату'
+                  vs === 'pct_of_payments' ? 'считается только с оплат «Через терминал»; пусто = по ставкам терминалов (рекомендуется); число = единый % для этого врача вместо ставок'
                     : vs === 'pct_of_base' ? 'процент: «до доли» — от базы, «после доли» — от доли врача'
-                    : vs === 'operation_field' ? 'пусто = из карточки операции; сумма = фикс для всех операций врача'
+                    : vs === 'operation_field' ? 'из карточки — сумма из операции; фикс — одна сумма на все операции; по таблице — сумма по виду операции (вкладка «Компоненты»)'
+                    : vs === 'table_by_op_type' ? 'по таблице — сумма по виду операции (вкладка «Компоненты»); фикс — одна сумма на все операции'
                     : vs === 'warehouse_or_norm' ? 'факт со склада или норматив (см. вкладку «Нормативы материалов») — берётся больший'
                     : 'сумма, ₸';
                 return (
@@ -535,7 +617,7 @@ function SchemesTab() {
                     <div className="flex items-center gap-2 text-sm">
                       <input type="checkbox" checked={on} onChange={(e) => {
                         const next = { ...picked };
-                        if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '' };
+                        if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '', mode: c.valueSource === 'table_by_op_type' ? 'table' : 'card' };
                         else delete next[c.id];
                         setPicked(next);
                       }} />
@@ -546,8 +628,17 @@ function SchemesTab() {
                             <option value="before_share">до доли</option>
                             <option value="after_share">после доли</option>
                           </select>
+                          {tableCapable && (
+                            <select className="input h-8 w-36 py-0 text-xs" value={mode} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], mode: e.target.value as 'card' | 'fixed' | 'table' } })}>
+                              {vs === 'operation_field' && <option value="card">из карточки операции</option>}
+                              <option value="table">по таблице видов операций</option>
+                              <option value="fixed">фикс сумма</option>
+                            </select>
+                          )}
                           {noValue ? (
                             <span className="w-28 text-center text-xs text-slate-400">склад/норматив</span>
+                          ) : tableCapable && mode !== 'fixed' ? (
+                            <span className="w-28 text-center text-xs text-slate-400">{mode === 'table' ? 'из таблицы' : 'из операции'}</span>
                           ) : (
                             <input className="input h-8 w-28 py-0 text-xs" placeholder={isPct ? 'напр. 3 (%)' : 'сумма ₸'} value={picked[c.id].value} onChange={(e) => setPicked({ ...picked, [c.id]: { ...picked[c.id], value: e.target.value } })} />
                           )}
