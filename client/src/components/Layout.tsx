@@ -1,5 +1,13 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, ROLE_LABEL, type Role } from '../lib/auth';
+import { loadSession, saveSession, clearSession } from '../lib/persist';
+
+// «Память» раздела «Выплаты»: пункт меню возвращает на последнюю открытую страницу раздела
+// (реестр, ведомость, расшифровка), а не в список. Повторный клик по активному пункту —
+// в корень раздела. Для прочих разделов поведение обычное.
+const remembers = (n: NavItem) => n.to.startsWith('/payouts') && !n.end;
+const inSection = (pathname: string, to: string) => pathname === to || pathname.startsWith(to + '/');
 
 interface NavItem {
   to: string;
@@ -95,6 +103,17 @@ export function Layout() {
     .map((s) => ({ ...s, items: s.items.filter((n) => visible(n.roles)) }))
     .filter((s) => s.items.length > 0);
 
+  // Запоминаем последний путь внутри разделов «Выплат» при каждом переходе.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    for (const s of SECTIONS.concat(ADMIN_SECTION)) {
+      for (const n of s.items) {
+        if (remembers(n) && inSection(location.pathname, n.to)) saveSession(`lastPath:${n.to}`, location.pathname + location.search);
+      }
+    }
+  }, [location.pathname, location.search]);
+
   return (
     <div className="flex h-full">
       <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -110,11 +129,29 @@ export function Layout() {
                   {sec.title}
                 </div>
               )}
-              {sec.items.map((n) => (
-                <NavLink key={n.to} to={n.to} end={n.end} className={linkClass}>
-                  <span className="text-base">{n.icon}</span> {n.label}
-                </NavLink>
-              ))}
+              {sec.items.map((n) => {
+                const remembered = remembers(n) ? loadSession<string | null>(`lastPath:${n.to}`, null) : null;
+                const active = remembers(n) && inSection(location.pathname, n.to);
+                return (
+                  <NavLink
+                    key={n.to}
+                    to={remembered ?? n.to}
+                    end={n.end}
+                    className={({ isActive }) => linkClass({ isActive: isActive || active })}
+                    title={remembered && remembered !== n.to ? 'Вернуться туда, где были. Повторный клик — в список' : undefined}
+                    onClick={(e) => {
+                      // Уже внутри раздела: клик по пункту ведёт в корень (список) и сбрасывает память.
+                      if (active && location.pathname !== n.to) {
+                        e.preventDefault();
+                        clearSession(`lastPath:${n.to}`);
+                        navigate(n.to);
+                      }
+                    }}
+                  >
+                    <span className="text-base">{n.icon}</span> {n.label}
+                  </NavLink>
+                );
+              })}
             </div>
           ))}
         </nav>

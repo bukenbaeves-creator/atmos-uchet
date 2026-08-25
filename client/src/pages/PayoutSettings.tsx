@@ -4,6 +4,7 @@ import { apiGet, apiPost, ApiError } from '../api/client';
 import { PageHeader, Spinner, EmptyState, Modal, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { useDictionaries } from '../lib/dictionaries';
+import { loadSession, saveSession } from '../lib/persist';
 
 // Экран «Настройки выплат» — конструктор модуля выплат врачам (только администратор).
 // Шесть вкладок: получатели, компоненты расчёта, ставки эквайринга, тарифы анестезии,
@@ -51,7 +52,8 @@ function DictSelect({ category, value, onChange, placeholder = '— выбери
 }
 
 export function PayoutSettings() {
-  const [tab, setTab] = useState<TabKey>('payees');
+  const [tab, setTabState] = useState<TabKey>(() => loadSession<TabKey>('tab:payout-settings', 'payees'));
+  const setTab = (t: TabKey) => { setTabState(t); saveSession('tab:payout-settings', t); };
   return (
     <div>
       <PageHeader

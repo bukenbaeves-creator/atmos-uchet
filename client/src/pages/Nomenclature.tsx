@@ -4,6 +4,7 @@ import { apiGet, apiPatch, apiPost, apiPut, ApiError } from '../api/client';
 import { PageHeader, Spinner, EmptyState, Modal, Badge, Hint } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { useAuth } from '../lib/auth';
+import { loadSession, saveSession } from '../lib/persist';
 
 interface Nom {
   id: number;
@@ -22,7 +23,8 @@ export function Nomenclature() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'active' | 'draft'>('active');
+  const [tab, setTabState] = useState<'active' | 'draft'>(() => loadSession<'active' | 'draft'>('tab:nomenclature', 'active'));
+  const setTab = (t: 'active' | 'draft') => { setTabState(t); saveSession('tab:nomenclature', t); };
   const [confirming, setConfirming] = useState<Nom | null>(null);
   const [editing, setEditing] = useState<Nom | null>(null);
   const [merging, setMerging] = useState<Nom | null>(null);

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { loadSession, saveSession } from '../lib/persist';
 import dayjs from 'dayjs';
 import { useList, useCrudMutations } from '../api/hooks';
 import { useAuth } from '../lib/auth';
@@ -71,7 +72,10 @@ export function JournalPage<T extends JournalRecord>({
   transformPayload,
 }: Props<T>) {
   const { user, isAdmin } = useAuth();
-  const [params, setParams] = useState<Record<string, unknown>>({ page: 1, search: '' });
+  // Фильтры/поиск/страница переживают переходы между вкладками (sessionStorage на время сессии).
+  const paramsKey = `journal:${entity}`;
+  const [params, setParams] = useState<Record<string, unknown>>(() => loadSession(paramsKey, { page: 1, search: '' }));
+  useEffect(() => saveSession(paramsKey, params), [paramsKey, params]);
   const setParam = (k: string, v: unknown) => setParams((s) => ({ ...s, [k]: v, ...(k !== 'page' ? { page: 1 } : {}) }));
 
   const query = { ...params, ...(extraParams ?? {}) };
