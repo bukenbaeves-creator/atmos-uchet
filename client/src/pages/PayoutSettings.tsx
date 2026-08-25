@@ -153,7 +153,7 @@ function PayeesTab() {
 }
 
 // ---------- Компоненты расчёта ----------
-interface Comp { id: number; code: string; name: string; valueSource: string; direction: string; defaultStage: string; isSystem: boolean; isActive: boolean; }
+interface Comp { id: number; code: string; name: string; valueSource: string; direction: string; defaultStage: string; isSystem: boolean; isActive: boolean; _count?: { tableValues: number }; }
 function ComponentsTab() {
   const { data, isLoading, isError } = useItems<Comp>('payout-components', '/payouts/components');
   const [tableFor, setTableFor] = useState<Comp | null>(null);
@@ -198,6 +198,19 @@ function ComponentTableEditor({ comp }: { comp: Comp }) {
   const qc = useQueryClient();
   const key = ['payout-component-table', comp.id];
   const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => apiGet<{ items: TableRow[] }>(`/payouts/components/${comp.id}/table`) });
+  // Действующие схемы, где этот компонент включён НЕ в режиме «по таблице» — таблица к ним
+  // не применяется, пока не создать новую версию схемы с режимом «по таблице».
+  const schemesQ = useItems<Scheme>('payout-schemes', '/payouts/schemes');
+  const payeesQ = useItems<Payee>('payout-payees', '/payouts/payees');
+  const notUsingTable = (schemesQ.data?.items ?? [])
+    .filter((s) => !s.validTo)
+    .map((s) => ({ s, it: s.items.find((i) => i.componentId === comp.id && i.enabled) }))
+    .filter((x) => x.it && x.it.filter?.mode !== 'table' && !(comp.valueSource === 'table_by_op_type' && !x.it.useOwnValue))
+    .map((x) => ({
+      scheme: x.s,
+      fio: payeesQ.data?.items.find((p) => p.id === x.s.payeeId)?.fio ?? `#${x.s.payeeId}`,
+      how: x.it!.useOwnValue && x.it!.value != null ? `фикс ${fmtMoney(Number(x.it!.value))}` : 'из карточки операции',
+    }));
   const [form, setForm] = useState({ key: '', value: '', validFrom: '2020-01-01' });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -216,6 +229,19 @@ function ComponentTableEditor({ comp }: { comp: Comp }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">Сумма вычета по виду операции. Виды, которых нет в таблице, вычета не дают (напр. блефаропластика без наркоза).</p>
+      {notUsingTable.length > 0 ? (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="font-medium">Таблица пока НЕ применяется к этим схемам — у «{comp.name}» там другой режим:</div>
+          <ul className="mt-1 list-inside list-disc">
+            {notUsingTable.map((x) => (
+              <li key={x.scheme.id}>{x.fio} — схема «{x.scheme.name}» ({x.how})</li>
+            ))}
+          </ul>
+          <div className="mt-1 text-xs">Создайте новую версию схемы («Схемы → + Схема») и выберите у «{comp.name}» режим «по таблице видов операций» — старая версия закроется автоматически. Затем «↻ Пересчитать выплаты».</div>
+        </div>
+      ) : (
+        schemesQ.data && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Все действующие схемы с этим компонентом используют таблицу.</div>
+      )}
       <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <div className="sm:col-span-2"><label className="label">Вид операции</label><DictSelect category="op_type" value={form.key} onChange={(v) => setForm({ ...form, key: v })} required /></div>
         <div><label className="label">Сумма, ₸</label><input className="input" placeholder="напр. 250000" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} required /></div>
@@ -226,14 +252,26 @@ function ComponentTableEditor({ comp }: { comp: Comp }) {
       {isLoading ? <Spinner /> : latest.size === 0 ? (
         <EmptyState>Таблица пуста — вычет по этому компоненту пока нигде не применяется.</EmptyState>
       ) : (
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="py-1">Вид операции</th><th className="py-1 text-right">Сумма</th><th className="py-1">Действует с</th></tr></thead>
-          <tbody>
-            {[...latest.values()].map((r) => (
-              <tr key={r.id} className="border-b border-slate-50"><td className="py-1 font-medium">{r.key}</td><td className="py-1 text-right tabular-nums">{fmtMoney(r.value)}</td><td className="py-1">{fmtDate(r.validFrom)}</td></tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                <th className="px-3 py-2 text-left">Вид операции</th>
+                <th className="w-36 px-3 py-2 text-right">Сумма, ₸</th>
+                <th className="w-36 px-3 py-2 text-center">Действует с</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...latest.values()].map((r) => (
+                <tr key={r.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-1.5 font-medium">{r.key}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.value)}</td>
+                  <td className="px-3 py-1.5 text-center">{fmtDate(r.validFrom)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -608,7 +646,7 @@ function SchemesTab() {
                 const hint =
                   vs === 'pct_of_payments' ? 'считается только с оплат «Через терминал»; пусто = по ставкам терминалов (рекомендуется); число = единый % для этого врача вместо ставок'
                     : vs === 'pct_of_base' ? 'процент: «до доли» — от базы, «после доли» — от доли врача'
-                    : vs === 'operation_field' ? 'из карточки — сумма из операции; фикс — одна сумма на все операции; по таблице — сумма по виду операции (вкладка «Компоненты»)'
+                    : vs === 'operation_field' ? 'из карточки — сумма из операции; фикс — одна сумма на ВСЕ операции; по таблице — сумма по виду операции из вкладки «Компоненты» (вид не в таблице → 0)'
                     : vs === 'table_by_op_type' ? 'по таблице — сумма по виду операции (вкладка «Компоненты»); фикс — одна сумма на все операции'
                     : vs === 'warehouse_or_norm' ? 'факт со склада или норматив (см. вкладку «Нормативы материалов») — берётся больший'
                     : 'сумма, ₸';
@@ -617,7 +655,8 @@ function SchemesTab() {
                     <div className="flex items-center gap-2 text-sm">
                       <input type="checkbox" checked={on} onChange={(e) => {
                         const next = { ...picked };
-                        if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '', mode: c.valueSource === 'table_by_op_type' ? 'table' : 'card' };
+                        // Если у компонента заполнена таблица по видам операций — по умолчанию «по таблице».
+                      if (e.target.checked) next[c.id] = { stage: c.defaultStage, value: '', mode: c.valueSource === 'table_by_op_type' || (c._count?.tableValues ?? 0) > 0 ? 'table' : 'card' };
                         else delete next[c.id];
                         setPicked(next);
                       }} />

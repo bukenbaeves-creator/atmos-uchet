@@ -33,7 +33,11 @@ const updateSchema = createSchema.omit({ code: true }).partial();
 router.get(
   '/',
   asyncHandler(async (_req, res) => {
-    const rows = await prisma.calcComponent.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] });
+    // _count.tableValues — есть ли у компонента таблица «вид операции → сумма» (для UI).
+    const rows = await prisma.calcComponent.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      include: { _count: { select: { tableValues: true } } },
+    });
     res.json({ items: serialize(rows) });
   }),
 );
