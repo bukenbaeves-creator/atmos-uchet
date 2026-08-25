@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma.js';
 import { asyncHandler, badRequest } from '../../lib/http.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireAdmin } from '../../middleware/rbac.js';
-import { recalcOperation, buildCalcScheme, loadRecalcContext, loadTableRows, opTypeTablesFor } from '../../services/payout-engine.service.js';
+import { recalcOperation, buildCalcScheme, loadRecalcContext, loadTableRows, opTypeTablesFor, collectMaterialsFact } from '../../services/payout-engine.service.js';
 import { calcPayout, SYSTEM_COMPONENT_META, type CalcScheme, type AcquiringRateInput } from '../../services/payout-calc.service.js';
 import { getSchemeForDate } from '../../services/payout-scheme.service.js';
 import { serialize } from '../../lib/serialize.js';
@@ -204,7 +204,7 @@ router.post(
         payMethod: p.payMethod,
       }));
       const opTypeTables = opTypeTablesFor(tableRows, op.dateOp);
-      const materialsFact = op.writeoffs.length ? op.writeoffs.reduce((s, w) => s + Number(w.costTotal), 0) : null;
+      const materialsFact = await collectMaterialsFact(prisma, { id: op.id, patientId: op.patientId, dateOp: op.dateOp, opType: op.opType });
       let materialNorm: number | null = null;
       if (op.opType) {
         const n = await prisma.materialNorm.findFirst({ where: { opType: op.opType, validFrom: { lte: op.dateOp } }, orderBy: { validFrom: 'desc' } });

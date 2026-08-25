@@ -120,6 +120,48 @@ export function opTypeTablesFor(rows: TableRow[], date: Date): Record<string, Re
   return out;
 }
 
+// Фактические расходные материалы операции. Списания медсестры делаются ПО ПАЦИЕНТУ
+// (вид операции + дата) без ссылки на операцию, поэтому берём: явные списания
+// (operationId) + списания пациента без операции с тем же видом (или без вида) в окне
+// [−30; +60] дней от даты операции; при нескольких подходящих операциях пациента списание
+// относится к БЛИЖАЙШЕЙ по дате — без задвоения. Нет списаний → null (норматив/0).
+export async function collectMaterialsFact(
+  tx: PrismaClientOrTx,
+  op: { id: number; patientId: number; dateOp: Date; opType: string | null },
+): Promise<number | null> {
+  const DAY = 86400000;
+  const from = new Date(op.dateOp.getTime() - 30 * DAY);
+  const to = new Date(op.dateOp.getTime() + 60 * DAY);
+  const [explicit, unlinked, ops] = await Promise.all([
+    tx.expenseWriteoff.findMany({ where: { operationId: op.id, deletedAt: null }, select: { costTotal: true } }),
+    tx.expenseWriteoff.findMany({
+      where: { patientId: op.patientId, operationId: null, deletedAt: null, date: { gte: from, lte: to } },
+      select: { costTotal: true, opType: true, date: true },
+    }),
+    tx.operation.findMany({ where: { patientId: op.patientId, deletedAt: null, dateOp: { not: null } }, select: { id: true, dateOp: true, opType: true } }),
+  ]);
+  let sum = explicit.reduce((s, w) => s + Number(w.costTotal), 0);
+  let matched = explicit.length > 0;
+  for (const w of unlinked) {
+    if (w.opType && op.opType && w.opType !== op.opType) continue;
+    let bestId = op.id;
+    let bestDist = Infinity;
+    for (const o of ops) {
+      if (!o.dateOp) continue;
+      if (w.opType && o.opType && w.opType !== o.opType) continue;
+      const dist = Math.abs(o.dateOp.getTime() - w.date.getTime());
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = o.id;
+      }
+    }
+    if (bestId !== op.id) continue; // ближе к другой операции пациента
+    sum += Number(w.costTotal);
+    matched = true;
+  }
+  return matched ? round2(sum) : null;
+}
+
 // Преднагруженный справочный контекст для массового пересчёта («данные читать пакетно»):
 // ставки и компоненты одинаковы для всех операций, поэтому их можно загрузить один раз.
 export interface RecalcContext {
@@ -181,7 +223,9 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
       validFrom: toISODate(r.validFrom),
     }));
   // Факт со склада: сумма себестоимости списаний; при отсутствии списаний — null (подставится норматив).
-  const materialsFact = op.writeoffs.length ? round2(op.writeoffs.reduce((s, w) => s + Number(w.costTotal), 0)) : null;
+  // Факт со склада: явные списания операции + списания пациента без операции (медсестра
+  // списывает по пациенту), отнесённые к ближайшей операции. Нет списаний → null (норматив).
+  const materialsFact = await collectMaterialsFact(tx, { id: op.id, patientId: op.patientId, dateOp: op.dateOp, opType: op.opType });
   let materialNorm: number | null = null;
   if (op.opType) {
     const norm = await tx.materialNorm.findFirst({

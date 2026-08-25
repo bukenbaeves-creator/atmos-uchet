@@ -48,6 +48,7 @@ async function cleanup() {
       await prisma.operationParticipant.deleteMany({ where: { operationId: { in: pids } } });
     }
     await prisma.payment.deleteMany({ where: { patientId: pat.id } });
+    await prisma.expenseWriteoff.deleteMany({ where: { patientId: pat.id } });
     await prisma.operation.deleteMany({ where: { patientId: pat.id } });
     await prisma.consultation.deleteMany({ where: { patientId: pat.id } });
     await prisma.patient.delete({ where: { id: pat.id } });
@@ -103,6 +104,43 @@ async function main() {
   check('метод строки = норматив', r0.materialsMethod === 'норматив');
   // начислено = (1 000 000 − 50 000) × 0.5 = 475 000
   check('начислено = 475 000', Number(appr.lines[0].accruedTotal) === 475000);
+
+  console.log('\n=== Списания медсестры БЕЗ ссылки на операцию → «Материалы (факт)» ===');
+  const nom = await prisma.nomenclature.findFirst({ where: { deletedAt: null }, select: { id: true } });
+  const cat = await prisma.expenseCategory.findFirst({ select: { id: true } });
+  if (!nom || !cat) {
+    console.log('   (пропуск: нет номенклатуры/категории в базе)');
+  } else {
+    const mkOp = async (dateOp: string) => {
+      const o = await prisma.operation.create({
+        data: { patientId: patient.id, dateOp: new Date(dateOp + 'T00:00:00Z'), cost: 1000000, anesthesiaCost: 0, zapis: 'КЛИНИКА', opType: TAG, participants: { create: [{ payeeId: payee.id, role: 'surgeon' }] } },
+      });
+      await prisma.payment.create({ data: { operationId: o.id, patientId: patient.id, direction: 'payment', date: new Date(dateOp + 'T00:00:00Z'), amount: 1000000, terminal: 'Наличные' } });
+      return o.id;
+    };
+    const mkWo = (date: string, cost: number) =>
+      prisma.expenseWriteoff.create({
+        data: { patientId: patient.id, operationId: null, opType: TAG, nomenclatureId: nom.id, categoryId: cat.id, qty: 1, costTotal: cost, date: new Date(date + 'T00:00:00Z') },
+      });
+    const opB = await mkOp('2026-10-10');
+    await mkWo('2026-10-11', 70000); // по пациенту, без операции — рядом с opB
+    const opC = await mkOp('2026-11-10');
+    await mkWo('2026-11-11', 30000); // ближе к opC
+    await recalcOperation(opB, prisma);
+    await recalcOperation(opC, prisma);
+    const matOf = async (opId: number) => {
+      const a = await prisma.payoutAccrual.findFirst({ where: { operationId: opId, payeeId: payee.id, isCorrection: false } });
+      const c = ((a?.components as Array<{ code: string; amount: number; detail?: { fact: number; norm: number; method: string } }>) ?? []).find((x) => x.code === 'materials');
+      return { amount: a ? Number(a.amount) : NaN, fact: c?.detail?.fact, method: c?.detail?.method };
+    };
+    const b = await matOf(opB);
+    const cRes = await matOf(opC);
+    check('opB: факт 70 000 из списания по пациенту (без операции)', b.fact === 70000, JSON.stringify(b));
+    check('opB: метод «факт» (70 000 > норматив 50 000)', b.method === 'факт');
+    check('opB: начислено (1 000 000 − 70 000) × 0.5 = 465 000', b.amount === 465000);
+    check('opC: факт 30 000 (второе списание ушло к ближайшей операции, не задвоилось)', cRes.fact === 30000, JSON.stringify(cRes));
+    check('opC: метод «норматив» (30 000 < 50 000) → начислено 475 000', cRes.method === 'норматив' && cRes.amount === 475000);
+  }
 
   await cleanup();
 }
