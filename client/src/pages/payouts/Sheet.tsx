@@ -94,7 +94,7 @@ export function Sheet() {
   return (
     <div>
       <PageHeader
-        title={`Ведомость ${s.number}`}
+        title={`Ведомость ${s.number}${(() => { const names = [...new Set((s.lines.length ? s.lines.map((l) => l.payee?.fio) : s.accruals.map((a) => a.payee?.fio)).filter(Boolean))]; return names.length === 1 ? ` · ${names[0]}` : ''; })()}`}
         subtitle={`${KIND[s.kind] ?? s.kind}${s.periodFrom ? ` · ${fmtDate(s.periodFrom)} — ${fmtDate(s.periodTo)}` : ''}`}
         actions={
           <div className="flex items-center gap-2">

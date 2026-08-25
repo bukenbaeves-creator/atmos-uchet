@@ -14,6 +14,7 @@ interface Sheet {
   periodTo: string | null;
   status: 'draft' | 'approved' | 'paid';
   lines: SheetLine[];
+  payees?: string[];
 }
 
 const KIND: Record<string, string> = { weekly: 'Недельная', monthly: 'Месячная', custom: 'Произвольная', adhoc: 'Внеочередная' };
@@ -85,6 +86,7 @@ export function Sheets() {
             <thead>
               <tr className="border-b border-slate-200 text-left text-slate-500">
                 <th className="px-3 py-2">Номер</th>
+                <th className="px-3 py-2">Врач</th>
                 <th className="px-3 py-2">Тип</th>
                 <th className="px-3 py-2">Период</th>
                 <th className="px-3 py-2">Статус</th>
@@ -99,6 +101,7 @@ export function Sheets() {
                 return (
                   <tr key={s.id} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50" onClick={() => nav(`/payouts/sheets/${s.id}`)}>
                     <td className="px-3 py-2 font-medium">{s.number}</td>
+                    <td className="px-3 py-2">{(s.payees?.length ?? 0) === 1 ? s.payees![0] : s.payees?.length ? `${s.payees.length} врачей` : '—'}</td>
                     <td className="px-3 py-2">{KIND[s.kind] ?? s.kind}</td>
                     <td className="px-3 py-2">{s.periodFrom ? `${fmtDate(s.periodFrom)} — ${fmtDate(s.periodTo)}` : '—'}</td>
                     <td className="px-3 py-2"><Badge tone={STATUS[s.status]?.tone ?? 'slate'}>{STATUS[s.status]?.label ?? s.status}</Badge></td>
@@ -112,7 +115,15 @@ export function Sheets() {
         </div>
       )}
 
-      <SheetWizard open={wizard} onClose={() => setWizard(false)} onCreated={(id) => { setWizard(false); nav(`/payouts/sheets/${id}`); }} />
+      <SheetWizard
+        open={wizard}
+        onClose={() => setWizard(false)}
+        onCreated={(ids) => {
+          setWizard(false);
+          qc.invalidateQueries({ queryKey: ['payout-sheets'] });
+          if (ids.length === 1) nav(`/payouts/sheets/${ids[0]}`); // один врач — сразу в его ведомость
+        }}
+      />
     </div>
   );
 }

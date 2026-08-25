@@ -72,14 +72,22 @@ const SECTIONS: Section[] = [
   },
 ];
 
+// Модуль выплат врачам — отдельный раздел, только администратор.
+const PAYOUTS_SECTION: Section = {
+  title: 'Выплаты врачам',
+  roles: ['admin'],
+  items: [
+    { to: '/payouts', label: 'Дашборд', icon: '📊', end: true },
+    { to: '/payouts/settings', label: 'Настройки', icon: '💸' },
+    { to: '/payouts/sheets', label: 'Ведомости', icon: '📄' },
+    { to: '/payouts/trace', label: 'Как посчитано', icon: '🧮' },
+  ],
+};
+
 const ADMIN_SECTION: Section = {
   title: 'Администрирование',
   roles: ['admin'],
   items: [
-    { to: '/payouts', label: 'Выплаты · дашборд', icon: '📊', end: true },
-    { to: '/payouts/settings', label: 'Выплаты · настройки', icon: '💸' },
-    { to: '/payouts/sheets', label: 'Выплаты · ведомости', icon: '📄' },
-    { to: '/payouts/trace', label: 'Выплаты · как посчитано', icon: '🧮' },
     { to: '/audit', label: 'Аудит', icon: '🕵️' },
     { to: '/admin', label: 'Пользователи', icon: '⚙️' },
     { to: '/backup', label: 'Резервные копии', icon: '💾' },
@@ -98,7 +106,7 @@ export function Layout() {
 
   // Фильтр разделов/пунктов по роли текущего пользователя
   const visible = (roles?: Role[]) => !roles || roles.includes(role);
-  const sections = [...SECTIONS, ADMIN_SECTION]
+  const sections = [...SECTIONS, PAYOUTS_SECTION, ADMIN_SECTION]
     .filter((s) => visible(s.roles))
     .map((s) => ({ ...s, items: s.items.filter((n) => visible(n.roles)) }))
     .filter((s) => s.items.length > 0);
@@ -107,7 +115,7 @@ export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    for (const s of SECTIONS.concat(ADMIN_SECTION)) {
+    for (const s of [...SECTIONS, PAYOUTS_SECTION, ADMIN_SECTION]) {
       for (const n of s.items) {
         if (remembers(n) && inSection(location.pathname, n.to)) saveSession(`lastPath:${n.to}`, location.pathname + location.search);
       }

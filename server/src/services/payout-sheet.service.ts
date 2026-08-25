@@ -354,8 +354,19 @@ export async function getSheetRegistry(sheetId: number, payeeId: number) {
   return { payeeId, payeeFio: accruals[0]?.payee?.fio ?? null, columns, rows, totals };
 }
 
+// Список ведомостей + имена врачей (из строк; у черновика строк ещё нет — из начислений).
 export async function listSheets() {
-  return prisma.payoutSheet.findMany({ include: { lines: true }, orderBy: { createdAt: 'desc' } });
+  const sheets = await prisma.payoutSheet.findMany({
+    include: {
+      lines: { include: { payee: { select: { fio: true } } } },
+      accruals: { select: { payee: { select: { fio: true } } } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return sheets.map(({ accruals, ...s }) => ({
+    ...s,
+    payees: [...new Set((s.lines.length ? s.lines.map((l) => l.payee.fio) : accruals.map((a) => a.payee.fio)))],
+  }));
 }
 
 export async function getSheet(id: number, tx: PrismaClientOrTx = prisma) {
