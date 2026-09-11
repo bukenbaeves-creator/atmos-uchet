@@ -161,6 +161,8 @@ interface ConsRow {
   konsStatus: string | null;
   dateZapis: string | null;
   amount: number | null;
+  paymentDate: string | null;
+  payMethod: string | null;
 }
 interface OpRow {
   id: number;
@@ -341,7 +343,8 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
     { header: 'Итог', cell: (r) => (r.stage ? <Badge tone="blue">{r.stage}</Badge> : '—') },
-    { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
+    { header: 'Дата платежа', cell: (r) => (r.paymentDate ? formatDate(r.paymentDate) : '—') },
+    { header: 'Способ оплаты', cell: (r) => r.payMethod ?? '—' },
     { header: 'Оплата', align: 'right', cell: (r) => (r.amount ? formatMoney(r.amount) : <Badge tone="green">согласовано</Badge>) },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
@@ -358,7 +361,6 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
     { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
-    { header: 'Дата записи', cell: (r) => formatDate(r.dateZapis) },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const notAttendedColumns: Column<NotAttendedRow>[] = [

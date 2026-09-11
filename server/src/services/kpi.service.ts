@@ -96,7 +96,9 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
         patient: { is: { deletedAt: null } },
         dateKons: { gte: from, lt: toExclusive, lte: now },
       },
-      include: patientSel,
+      // Платежи консультации — только для расшифровки (дата платежа, способ оплаты);
+      // на классификацию и суммы KPI не влияют.
+      include: { ...patientSel, payments: { where: { deletedAt: null, direction: 'payment' } } },
       orderBy: { dateKons: 'asc' },
     }),
     prisma.operation.findMany({
@@ -175,19 +177,26 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
   );
 
   // Расшифровка расчёта — конкретные записи по каждой категории.
-  const consultations = countedCons.map((c) => ({
-    id: c.id,
-    manager: c.manager,
-    patientFio: c.patient?.fio ?? null,
-    dateKons: c.dateKons?.toISOString() ?? null,
-    vid: c.vid,
-    interestOperation: c.interestOperation,
-    doctor: c.doctor,
-    stage: c.stage,
-    konsStatus: c.konsStatus,
-    dateZapis: c.dateZapis?.toISOString() ?? null,
-    amount: c.amount != null ? Number(c.amount) : null,
-  }));
+  const consultations = countedCons.map((c) => {
+    // Платёж(и) консультации: дата первого по времени и уникальные способы оплаты.
+    const pays = [...c.payments].sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
+    const methods = [...new Set(pays.map((p) => p.payMethod).filter((m): m is string => !!m))];
+    return {
+      id: c.id,
+      manager: c.manager,
+      patientFio: c.patient?.fio ?? null,
+      dateKons: c.dateKons?.toISOString() ?? null,
+      vid: c.vid,
+      interestOperation: c.interestOperation,
+      doctor: c.doctor,
+      stage: c.stage,
+      konsStatus: c.konsStatus,
+      dateZapis: c.dateZapis?.toISOString() ?? null,
+      amount: c.amount != null ? Number(c.amount) : null,
+      paymentDate: pays[0]?.date?.toISOString() ?? null,
+      payMethod: methods.length ? methods.join(', ') : null,
+    };
+  });
   const operations = countedOps.map((o) => ({
     id: o.id,
     manager: o.manager,
