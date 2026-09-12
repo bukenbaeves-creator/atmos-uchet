@@ -102,6 +102,36 @@ router.patch(
   }),
 );
 
+// Отказ в согласовании бесплатной консультации (только админ). Причина обязательна;
+// отказ обратим — rejected:false возвращает заявку в список «на согласовании».
+router.patch(
+  '/consultations/:id/reject',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const before = await prisma.consultation.findFirst({ where: { id, deletedAt: null } });
+    if (!before) throw notFound('Консультация не найдена');
+    const { rejected, reason } = z
+      .object({ rejected: z.coerce.boolean().default(true), reason: z.string().trim().max(1000).optional().nullable() })
+      .refine((d) => !d.rejected || !!d.reason, { message: 'Укажите причину отказа', path: ['reason'] })
+      .parse(req.body ?? {});
+    const after = await prisma.consultation.update({
+      where: { id },
+      data: {
+        kpiRejected: rejected,
+        kpiRejectReason: rejected ? (reason as string) : null,
+        kpiRejectedBy: rejected ? req.user!.id : null,
+        kpiRejectedAt: rejected ? new Date() : null,
+        // Отказ снимает согласование (иначе заявка попала бы в расчёт).
+        ...(rejected ? { kpiApproved: false, kpiApprovedBy: null, kpiApprovedAt: null } : {}),
+        updatedBy: req.user!.id,
+      },
+    });
+    await writeAudit(req, { action: 'update', entity: 'consultation', entityId: id, before, after });
+    res.json(serialize(after));
+  }),
+);
+
 // ===== Мини-дашборд качества =====
 
 // Настройки дашборда (пороги/сроки)

@@ -120,9 +120,11 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
   const statusNotSetCons: typeof consAll = []; // статус ещё не проставлен (не «провал» менеджера)
   const excludedCons: typeof consAll = []; // прошёл, но без итога
   const pendingCons: typeof consAll = []; // прошёл + итог, но без оплаты и без согласования
+  const rejectedCons: typeof consAll = []; // без оплаты, админ отказал в согласовании
   for (const c of consAll) {
     if (c.konsStatus === KONS_ATTENDED) {
       if (!hasStage(c.stage)) excludedCons.push(c);
+      else if (Number(c.amount ?? 0) <= 0 && c.kpiRejected) rejectedCons.push(c);
       else if (Number(c.amount ?? 0) <= 0 && !c.kpiApproved) pendingCons.push(c);
       else countedCons.push(c);
     } else if (c.konsStatus === KONS_NOT_ATTENDED) {
@@ -243,6 +245,18 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     comment: c.kpiComment,
     approved: c.kpiApproved,
   }));
+  const rejected = rejectedCons.map((c) => ({
+    id: c.id,
+    manager: c.manager,
+    patientFio: c.patient?.fio ?? null,
+    patientId: c.patientId,
+    dateKons: c.dateKons?.toISOString() ?? null,
+    vid: c.vid,
+    doctor: c.doctor,
+    comment: c.kpiComment,
+    rejectReason: c.kpiRejectReason,
+    rejectedAt: c.kpiRejectedAt?.toISOString() ?? null,
+  }));
   const operationsUnpaid = unpaidOps.map((o) => {
     const comp = computeOperation(o as Parameters<typeof computeOperation>[0]);
     return {
@@ -273,6 +287,7 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     notAttended,
     statusNotSet,
     pendingApproval,
+    rejected,
     operationsUnpaid,
   };
 }

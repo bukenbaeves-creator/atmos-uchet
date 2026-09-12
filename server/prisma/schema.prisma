@@ -135,6 +135,11 @@ model Consultation {
   kpiApproved   Boolean   @default(false)
   kpiApprovedBy Int?
   kpiApprovedAt DateTime?
+  // Отказ в согласовании бесплатной консультации (KPI): причина обязательна, отказ обратим.
+  kpiRejected     Boolean   @default(false)
+  kpiRejectReason String?
+  kpiRejectedBy   Int?
+  kpiRejectedAt   DateTime?
 
   operations Operation[]
   payments   Payment[]

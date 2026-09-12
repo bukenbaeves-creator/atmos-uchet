@@ -210,6 +210,18 @@ interface PendingRow {
   comment: string | null;
   approved: boolean;
 }
+interface RejectedRow {
+  id: number;
+  manager: string | null;
+  patientFio: string | null;
+  patientId: number;
+  dateKons: string | null;
+  vid: string | null;
+  doctor: string | null;
+  comment: string | null;
+  rejectReason: string | null;
+  rejectedAt: string | null;
+}
 interface OpUnpaidRow extends OpRow {
   paid: number | null;
   balance: number | null;
@@ -226,6 +238,7 @@ interface Report {
   notAttended: NotAttendedRow[];
   statusNotSet: NotAttendedRow[];
   pendingApproval: PendingRow[];
+  rejected: RejectedRow[];
   operationsUnpaid: OpUnpaidRow[];
 }
 
@@ -263,21 +276,79 @@ function CommentCell({ row }: { row: PendingRow }) {
   );
 }
 
-// Ячейка «Согласование» — кнопка «Согласовать» (только админ)
+// Ячейка «Согласование» — кнопки «Согласовать» и «Отказать» (только админ).
+// Отказ требует причину: ячейка раскрывается в мини-форму.
 function ApproveCell({ row, isAdmin }: { row: PendingRow; isAdmin: boolean }) {
   const qc = useQueryClient();
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const refresh = () => qc.invalidateQueries({ queryKey: ['kpi-report'] });
   const approve = useMutation({
     mutationFn: () => apiPatch(`/kpi/consultations/${row.id}/approve`, { approved: true }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kpi-report'] }),
+    onSuccess: refresh,
+  });
+  const reject = useMutation({
+    mutationFn: () => apiPatch(`/kpi/consultations/${row.id}/reject`, { rejected: true, reason: reason.trim() }),
+    onSuccess: () => {
+      setRejecting(false);
+      setReason('');
+      refresh();
+    },
   });
   if (row.approved) return <Badge tone="green">согласовано</Badge>;
   if (!isAdmin) return <span className="text-xs text-slate-400">на согласовании</span>;
+  if (rejecting) {
+    return (
+      <div className="inline-flex items-center gap-1">
+        <input
+          className="input h-8 w-48 text-xs"
+          autoFocus
+          placeholder="причина отказа…"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        <button
+          className="btn-danger px-2 py-1 text-xs"
+          disabled={!reason.trim() || reject.isPending}
+          onClick={() => reject.mutate()}
+          title={reason.trim() ? 'Подтвердить отказ' : 'Укажите причину отказа'}
+        >
+          {reject.isPending ? '…' : 'Подтвердить'}
+        </button>
+        <button className="btn-ghost px-2 py-1 text-xs" onClick={() => { setRejecting(false); setReason(''); }}>
+          Отмена
+        </button>
+        {reject.isError && <span className="text-xs text-rose-600" title={mutErr(reject.error)}>✕</span>}
+      </div>
+    );
+  }
   return (
     <div className="inline-flex items-center gap-1">
       <button className="btn-primary px-3 py-1 text-xs" disabled={approve.isPending} onClick={() => approve.mutate()}>
         {approve.isPending ? '…' : 'Согласовать'}
       </button>
+      <button className="btn-ghost px-2 py-1 text-xs text-rose-600" onClick={() => setRejecting(true)}>
+        Отказать
+      </button>
       {approve.isError && <span className="text-xs text-rose-600" title={mutErr(approve.error)}>✕</span>}
+    </div>
+  );
+}
+
+// Возврат отказанной заявки в список «на согласовании» (только админ).
+function UnrejectCell({ row, isAdmin }: { row: RejectedRow; isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const unreject = useMutation({
+    mutationFn: () => apiPatch(`/kpi/consultations/${row.id}/reject`, { rejected: false }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kpi-report'] }),
+  });
+  if (!isAdmin) return <Badge tone="red">отказано</Badge>;
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button className="btn-ghost px-2 py-1 text-xs" disabled={unreject.isPending} onClick={() => unreject.mutate()}>
+        {unreject.isPending ? '…' : 'Вернуть в согласование'}
+      </button>
+      {unreject.isError && <span className="text-xs text-rose-600" title={mutErr(unreject.error)}>✕</span>}
     </div>
   );
 }
@@ -345,6 +416,7 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   const notAttendedList = byMgr(data?.notAttended ?? []);
   const statusNotSetList = byMgr(data?.statusNotSet ?? []);
   const pendingList = byMgr(data?.pendingApproval ?? []);
+  const rejectedList = byMgr(data?.rejected ?? []);
   const opsUnpaidList = byMgr(data?.operationsUnpaid ?? []);
 
   const consColumns: Column<ConsRow>[] = [
@@ -439,6 +511,27 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
     { header: 'Комментарий менеджера', cell: (r) => <CommentCell row={r} /> },
     { header: 'Согласование', align: 'center', cell: (r) => <ApproveCell row={r} isAdmin={isAdmin} /> },
+  ];
+  const rejectedColumns: Column<RejectedRow>[] = [
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
+    { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
+    { header: 'Вид', cell: (r) => r.vid ?? '—' },
+    { header: 'Врач', cell: (r) => r.doctor ?? '—' },
+    { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
+    { header: 'Комментарий менеджера', cell: (r) => r.comment ?? '—' },
+    { header: 'Причина отказа', cell: (r) => <span className="text-rose-700">{r.rejectReason ?? '—'}</span> },
+    { header: 'Отказано', cell: (r) => formatDate(r.rejectedAt) },
+    { header: '', align: 'right', cell: (r) => <UnrejectCell row={r} isAdmin={isAdmin} /> },
   ];
   const opsUnpaidColumns: Column<OpUnpaidRow>[] = [
     {
@@ -629,6 +722,19 @@ function RewardTab({ from, to }: { from: string; to: string }) {
                   после этого она попадает в расчёт.
                 </div>
                 <Table columns={pendingColumns} rows={pendingList} />
+              </div>
+            )}
+
+            {rejectedList.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-sm font-semibold text-rose-700">
+                  Отказано в согласовании <span className="text-rose-400">({rejectedList.length})</span>
+                </div>
+                <div className="mb-2 text-xs text-slate-500">
+                  Администратор отказал — заявки не попадают в расчёт вознаграждения. Отказ можно отменить кнопкой
+                  «Вернуть в согласование».
+                </div>
+                <Table columns={rejectedColumns} rows={rejectedList} />
               </div>
             )}
 
