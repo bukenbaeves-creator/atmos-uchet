@@ -33,7 +33,7 @@ const paid = (v: Record<string, unknown>) => Number(v.amount) > 0;
 const fields: Field[] = [
   { name: 'patient', label: 'Пациент', type: 'patientBlock', required: true, span: 2 },
   { name: 'manager', label: 'Менеджер (кто записал)', type: 'select', dict: 'manager', required: true },
-  { name: 'dateZapis', label: 'Дата записи', type: 'date' },
+  // «Дата записи» заполняется сервером автоматически при создании — из формы убрана.
   { name: 'dateKons', label: 'Дата консультации', type: 'date', required: true },
   { name: 'time', label: 'Время', type: 'time' },
   { name: 'vid', label: 'Вид', type: 'select', dict: 'vid', required: true },
@@ -41,7 +41,7 @@ const fields: Field[] = [
   { name: 'doctor', label: 'Врач', type: 'select', dict: 'doctor', required: true },
   // --- оплата (необязательно; если указана — попадёт в «Кассу») ---
   { name: 'amount', label: 'Сумма консультации (пусто = бесплатно)', type: 'money' },
-  { name: 'payDate', label: 'Дата оплаты', type: 'date', showWhen: paid },
+  { name: 'payDate', label: 'Дата оплаты', type: 'date', required: true, showWhen: paid },
   { name: 'payMethod', label: 'Способ оплаты', type: 'select', dict: 'pay_method', required: true, showWhen: paid },
   {
     name: 'terminal',
@@ -105,7 +105,7 @@ export function Consultations() {
 
   const columns: Column<Consultation>[] = [
     { header: 'Пациент', cell: (c) => <span className="font-medium">{c.patient?.fio ?? '—'}</span> },
-    { header: 'Дата записи', cell: (c) => formatDate(c.dateZapis), filter: { kind: 'dateRange', paramFrom: 'dateZapisFrom', paramTo: 'dateZapisTo' } },
+    { header: 'Дата записи', cell: (c) => formatDate(c.dateZapis ?? c.createdAt ?? null), filter: { kind: 'dateRange', paramFrom: 'dateZapisFrom', paramTo: 'dateZapisTo' } },
     { header: 'Дата консультации', cell: (c) => formatDate(c.dateKons), filter: { kind: 'dateRange', paramFrom: 'dateKonsFrom', paramTo: 'dateKonsTo' } },
     { header: 'Менеджер', cell: (c) => c.manager ?? '—', filter: { kind: 'select', param: 'manager', options: opt(dict?.manager) } },
     { header: 'Врач', cell: (c) => c.doctor ?? '—', filter: { kind: 'select', param: 'doctor', options: opt(dict?.doctor) } },

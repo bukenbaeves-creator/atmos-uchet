@@ -44,6 +44,11 @@ const schema = z
   .refine((d) => d.payMethod !== TERMINAL_METHOD || !!d.terminal, {
     message: 'Необходимо указать терминал',
     path: ['terminal'],
+  })
+  // Если указана сумма — нужна дата оплаты
+  .refine((d) => !d.amount || d.amount <= 0 || !!d.payDate, {
+    message: 'Укажите дату оплаты консультации',
+    path: ['payDate'],
   });
 
 // Синхронизация оплаты консультации со связанным платежом (без дублей).
@@ -129,6 +134,10 @@ const router = makeCrudRouter({
   prepareData: async (data, req, ctx) => {
     const { patient, ...rest } = data as Record<string, unknown> & { patient: never };
     const patientId = await resolvePatient(patient, req, ctx.tx);
+    // «Дата записи» — полностью автоматическая: при создании всегда ставится сервером
+    // (день внесения записи), присланное значение игнорируется. При правке не меняется.
+    if (ctx.mode === 'create') rest.dateZapis = new Date();
+    else delete rest.dateZapis;
     // Свой итог (введён вручную) — добавляем в справочник «Стадии итога»
     rest.stage = typeof rest.stage === 'string' && rest.stage.trim() ? rest.stage.trim() : null;
     await ensureDictionaryValue('consultation_stage', rest.stage as string | null, req, ctx.tx);

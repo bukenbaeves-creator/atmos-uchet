@@ -100,6 +100,7 @@ export function Cashbox() {
   const columns: Column<Payment>[] = [
     { header: 'Пациент', cell: (p) => <span className="font-medium">{p.patient?.fio ?? '—'}</span> },
     { header: 'Дата', cell: (p) => formatDate(p.date), filter: { kind: 'dateRange', paramFrom: 'dateFrom', paramTo: 'dateTo' } },
+    { header: 'Дата записи', cell: (p) => formatDate(p.createdAt ?? null) },
     {
       header: 'Тип',
       filter: { kind: 'select', param: 'direction', options: [{ value: 'payment', label: 'Платёж' }, { value: 'refund', label: 'Возврат' }] },

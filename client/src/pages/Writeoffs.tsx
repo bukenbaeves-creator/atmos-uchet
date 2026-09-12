@@ -71,6 +71,7 @@ export function Writeoffs() {
 
   const columns: Column<Writeoff>[] = [
     { header: 'Дата', cell: (w) => formatDate(w.date) },
+    { header: 'Дата записи', cell: (w) => formatDate(w.createdAt ?? null) },
     { header: 'Пациент', cell: (w) => <span className="font-medium">{w.patient?.fio ?? '—'}</span> },
     { header: 'Позиция', cell: (w) => w.nomenclature?.nameDisplay ?? '—' },
     {

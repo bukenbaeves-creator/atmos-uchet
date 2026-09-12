@@ -31,6 +31,7 @@ interface Receipt {
   supplier: string | null;
   note: string | null;
   createdBy?: number | null;
+  createdAt?: string;
   batches: Batch[];
   lines: RLine[];
 }
@@ -100,6 +101,7 @@ export function Receipts() {
 
   const columns: Column<Receipt>[] = [
     { header: 'Дата', cell: (r) => formatDate(r.date) },
+    { header: 'Дата записи', cell: (r) => formatDate(r.createdAt ?? null) },
     { header: 'Статус', cell: (r) => <StatusBadge status={r.status} /> },
     { header: 'Поставщик', cell: (r) => r.supplier ?? '—' },
     { header: 'Позиций', align: 'right', cell: (r) => receiptCount(r) },

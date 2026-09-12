@@ -193,6 +193,7 @@ export function Operations() {
   const columns: Column<Operation>[] = [
     { header: 'Пациент', cell: (o) => <span className="font-medium">{o.patient?.fio ?? '—'}</span> },
     { header: 'Дата', cell: (o) => formatDate(o.dateOp), filter: { kind: 'dateRange', paramFrom: 'dateOpFrom', paramTo: 'dateOpTo' } },
+    { header: 'Дата записи', cell: (o) => formatDate(o.createdAt ?? null) },
     { header: 'Тип', cell: (o) => o.opType ?? '—', filter: { kind: 'select', param: 'opType', options: opt(dict?.op_type) } },
     { header: 'Менеджер', cell: (o) => o.manager ?? '—', filter: { kind: 'select', param: 'manager', options: opt(dict?.manager) } },
     { header: 'Врач', cell: (o) => o.surgeon ?? '—', filter: { kind: 'select', param: 'surgeon', options: opt(dict?.doctor) } },
