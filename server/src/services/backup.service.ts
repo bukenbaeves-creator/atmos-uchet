@@ -27,6 +27,22 @@ const TABLES: { key: string; load: () => Promise<unknown[]> }[] = [
   { key: 'writeoffBatchAllocation', load: () => prisma.writeoffBatchAllocation.findMany() },
   { key: 'revision', load: () => prisma.revision.findMany() },
   { key: 'revisionItem', load: () => prisma.revisionItem.findMany() },
+  { key: 'operationReschedule', load: () => prisma.operationReschedule.findMany() },
+  // Модуль «Выплаты врачам» (порядок «родители → дети» сохранён).
+  { key: 'doctorPayee', load: () => prisma.doctorPayee.findMany() },
+  { key: 'calcComponent', load: () => prisma.calcComponent.findMany() },
+  { key: 'componentTableValue', load: () => prisma.componentTableValue.findMany() },
+  { key: 'payoutScheme', load: () => prisma.payoutScheme.findMany() },
+  { key: 'schemeComponent', load: () => prisma.schemeComponent.findMany() },
+  { key: 'schemeShareValue', load: () => prisma.schemeShareValue.findMany() },
+  { key: 'acquiringRate', load: () => prisma.acquiringRate.findMany() },
+  { key: 'anesthesiaTariff', load: () => prisma.anesthesiaTariff.findMany() },
+  { key: 'materialNorm', load: () => prisma.materialNorm.findMany() },
+  { key: 'operationParticipant', load: () => prisma.operationParticipant.findMany() },
+  { key: 'payoutSheet', load: () => prisma.payoutSheet.findMany() },
+  { key: 'payoutAccrual', load: () => prisma.payoutAccrual.findMany() },
+  { key: 'payoutSheetLine', load: () => prisma.payoutSheetLine.findMany() },
+  { key: 'payoutPayment', load: () => prisma.payoutPayment.findMany() },
 ];
 
 export interface Backup {
