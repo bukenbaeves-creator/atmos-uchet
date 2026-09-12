@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { loadSession, saveSession } from '../lib/persist';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPut, apiPatch, ApiError } from '../api/client';
 import { formatMoney, formatNumber, formatDate } from '../lib/format';
@@ -119,8 +121,11 @@ function SectionHeader({ title }: { title: string }) {
 // ================= Общая страница: качество сверху, вознаграждение снизу =================
 export function Kpi() {
   const now = new Date();
-  const [from, setFrom] = useState(iso(new Date(now.getFullYear(), now.getMonth(), 1)));
-  const [to, setTo] = useState(iso(now));
+  // Период переживает переход в карточку пациента и обратно (sessionStorage).
+  const savedPeriod = loadSession<{ from: string; to: string } | null>('kpi:period', null);
+  const [from, setFrom] = useState(savedPeriod?.from ?? iso(new Date(now.getFullYear(), now.getMonth(), 1)));
+  const [to, setTo] = useState(savedPeriod?.to ?? iso(now));
+  useEffect(() => saveSession('kpi:period', { from, to }), [from, to]);
 
   return (
     <div>
@@ -153,6 +158,7 @@ interface ConsRow {
   id: number;
   manager: string | null;
   patientFio: string | null;
+  patientId: number;
   dateKons: string | null;
   vid: string | null;
   interestOperation: string | null;
@@ -168,6 +174,7 @@ interface OpRow {
   id: number;
   manager: string | null;
   patientFio: string | null;
+  patientId: number;
   dateOp: string | null;
   opType: string | null;
   surgeon: string | null;
@@ -177,6 +184,7 @@ interface ExclRow {
   id: number;
   manager: string | null;
   patientFio: string | null;
+  patientId: number;
   dateKons: string | null;
   interestOperation: string | null;
   doctor: string | null;
@@ -186,6 +194,7 @@ interface NotAttendedRow {
   id: number;
   manager: string | null;
   patientFio: string | null;
+  patientId: number;
   dateKons: string | null;
   doctor: string | null;
   konsStatus: string | null;
@@ -194,6 +203,7 @@ interface PendingRow {
   id: number;
   manager: string | null;
   patientFio: string | null;
+  patientId: number;
   dateKons: string | null;
   vid: string | null;
   doctor: string | null;
@@ -291,7 +301,8 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   });
 
   // Клиентский фильтр расшифровки по менеджеру (списки могут быть длинными)
-  const [managerFilter, setManagerFilter] = useState('');
+  const [managerFilter, setManagerFilter] = useState(() => loadSession<string>('kpi:manager', ''));
+  useEffect(() => saveSession('kpi:manager', managerFilter), [managerFilter]);
 
   const rows: Row[] = (data?.rows ?? []).map((r, i) => ({ ...r, id: i + 1 }));
   const columns: Column<Row>[] = [
@@ -337,7 +348,17 @@ function RewardTab({ from, to }: { from: string; to: string }) {
   const opsUnpaidList = byMgr(data?.operationsUnpaid ?? []);
 
   const consColumns: Column<ConsRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
     { header: 'Вид', cell: (r) => r.vid ?? '—' },
     { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
@@ -349,7 +370,17 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const opsColumns: Column<OpRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата операции', cell: (r) => formatDate(r.dateOp) },
     { header: 'Вид операции', cell: (r) => r.opType ?? '—' },
     { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
@@ -357,21 +388,51 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const exclColumns: Column<ExclRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
     { header: 'Вид операции', cell: (r) => r.interestOperation ?? '—' },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const notAttendedColumns: Column<NotAttendedRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
     { header: 'Статус', cell: (r) => r.konsStatus ?? <span className="text-slate-400">не указан</span> },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },
   ];
   const pendingColumns: Column<PendingRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата консультации', cell: (r) => formatDate(r.dateKons) },
     { header: 'Вид', cell: (r) => r.vid ?? '—' },
     { header: 'Врач', cell: (r) => r.doctor ?? '—' },
@@ -380,7 +441,17 @@ function RewardTab({ from, to }: { from: string; to: string }) {
     { header: 'Согласование', align: 'center', cell: (r) => <ApproveCell row={r} isAdmin={isAdmin} /> },
   ];
   const opsUnpaidColumns: Column<OpUnpaidRow>[] = [
-    { header: 'Пациент', cell: (r) => <span className="font-medium">{r.patientFio ?? '—'}</span> },
+    {
+      header: 'Пациент',
+      cell: (r) =>
+        r.patientId ? (
+          <Link to={`/patients/${r.patientId}`} className="font-medium text-brand-600 hover:underline">
+            {r.patientFio ?? '—'}
+          </Link>
+        ) : (
+          <span className="font-medium">{r.patientFio ?? '—'}</span>
+        ),
+    },
     { header: 'Дата операции', cell: (r) => formatDate(r.dateOp) },
     { header: 'Вид операции', cell: (r) => r.opType ?? '—' },
     { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
