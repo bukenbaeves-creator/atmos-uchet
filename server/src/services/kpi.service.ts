@@ -179,8 +179,11 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
   // Расшифровка расчёта — конкретные записи по каждой категории.
   const consultations = countedCons.map((c) => {
     // Платёж(и) консультации: дата первого по времени и уникальные способы оплаты.
+    // У legacy-записей связанного платежа нет — берём payDate/payMethod из самой
+    // консультации; дата при пустом payDate — dateKons (как в syncConsultationPayment).
     const pays = [...c.payments].sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
     const methods = [...new Set(pays.map((p) => p.payMethod).filter((m): m is string => !!m))];
+    const paymentDate = pays[0]?.date ?? c.payDate ?? (Number(c.amount ?? 0) > 0 ? c.dateKons : null);
     return {
       id: c.id,
       manager: c.manager,
@@ -193,8 +196,8 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
       konsStatus: c.konsStatus,
       dateZapis: c.dateZapis?.toISOString() ?? null,
       amount: c.amount != null ? Number(c.amount) : null,
-      paymentDate: pays[0]?.date?.toISOString() ?? null,
-      payMethod: methods.length ? methods.join(', ') : null,
+      paymentDate: paymentDate?.toISOString() ?? null,
+      payMethod: methods.length ? methods.join(', ') : (c.payMethod ?? null),
     };
   });
   const operations = countedOps.map((o) => ({
