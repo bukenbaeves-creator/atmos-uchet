@@ -3,9 +3,8 @@ import { loadSession, saveSession } from '../lib/persist';
 import dayjs from 'dayjs';
 import { useList, useCrudMutations } from '../api/hooks';
 import { useAuth } from '../lib/auth';
-import { exportUrl } from '../api/client';
 import { EntityForm, type Field } from './EntityForm';
-import { ExportButton } from './ExportButton';
+import { ExportPeriodButton } from './ExportPeriodButton';
 import { Table, type Column } from './Table';
 import { Modal, PageHeader, Pagination, Spinner, EmptyState } from './ui';
 
@@ -127,7 +126,7 @@ export function JournalPage<T extends JournalRecord>({
         actions={
           <>
             {headerActions}
-            {exportJournal && <ExportButton url={exportUrl(exportJournal)} filename={`${exportJournal}.xlsx`} />}
+            {exportJournal && <ExportPeriodButton journal={exportJournal} />}
             <button className="btn-primary" onClick={openCreate}>
               + {newButtonLabel}
             </button>

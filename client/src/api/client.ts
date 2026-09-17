@@ -61,7 +61,15 @@ export async function downloadFile(url: string, filename: string): Promise<void>
   setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
 
-export const exportUrl = (journal: string) => `${BASE}/api/export/${journal}.xlsx`;
+// Выгрузка журнала в Excel. Необязательный период (обе границы включительно):
+// exportUrl('payments', { from: '2026-09-01', to: '2026-09-30' })
+export const exportUrl = (journal: string, period?: { from?: string; to?: string }) => {
+  const q = new URLSearchParams();
+  if (period?.from) q.set('from', period.from);
+  if (period?.to) q.set('to', period.to);
+  const qs = q.toString();
+  return `${BASE}/api/export/${journal}.xlsx${qs ? `?${qs}` : ''}`;
+};
 export const payoutSheetExportUrl = (id: number) => `${BASE}/api/payouts/sheets/${id}/export`;
 export const payoutActUrl = (id: number, lineId: number) => `${BASE}/api/payouts/sheets/${id}/lines/${lineId}/act`;
 // Выгрузки модуля расходов (stock | purchase-list | expiry | writeoffs)
