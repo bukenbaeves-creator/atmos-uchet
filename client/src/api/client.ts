@@ -73,7 +73,13 @@ export const exportUrl = (journal: string, period?: { from?: string; to?: string
 export const payoutSheetExportUrl = (id: number) => `${BASE}/api/payouts/sheets/${id}/export`;
 export const payoutActUrl = (id: number, lineId: number) => `${BASE}/api/payouts/sheets/${id}/lines/${lineId}/act`;
 // Выгрузки модуля расходов (stock | purchase-list | expiry | writeoffs)
-export const expenseExportUrl = (report: string) => `${BASE}/api/expense-export/${report}.xlsx`;
+export const expenseExportUrl = (report: string, period?: { from?: string; to?: string }) => {
+  const q = new URLSearchParams();
+  if (period?.from) q.set('from', period.from);
+  if (period?.to) q.set('to', period.to);
+  const qs = q.toString();
+  return `${BASE}/api/expense-export/${report}.xlsx${qs ? `?${qs}` : ''}`;
+};
 // Шаблон для импорта прихода
 export const receiptTemplateUrl = () => `${BASE}/api/receipts/template.xlsx`;
 // Скачивание резервной копии БД (JSON)

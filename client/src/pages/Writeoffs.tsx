@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { apiGet, apiPost, apiPut, apiDelete, ApiError, expenseExportUrl } from '../api/client';
-import { ExportButton } from '../components/ExportButton';
+import { ExportPeriodButton } from '../components/ExportPeriodButton';
 import type { ListResponse } from '../api/hooks';
 import { formatDate } from '../lib/format';
 import { PageHeader, Spinner, EmptyState, Modal, Badge, Pagination } from '../components/ui';
@@ -117,7 +117,11 @@ export function Writeoffs() {
         subtitle="Списание препаратов и расходников на пациента. Себестоимость видит только администратор."
         actions={
           <>
-            <ExportButton url={expenseExportUrl('writeoffs')} filename="writeoffs.xlsx" />
+            <ExportPeriodButton
+              journal="writeoffs"
+              buildUrl={(p) => expenseExportUrl('writeoffs', p)}
+              periodHint="Период считается по дате списания."
+            />
             <button className="btn-primary" onClick={() => setOpen(true)}>
               + Списание
             </button>

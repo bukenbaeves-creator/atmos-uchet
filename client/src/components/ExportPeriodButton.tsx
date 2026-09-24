@@ -52,10 +52,14 @@ export function ExportPeriodButton({
   journal,
   label = 'Экспорт в Excel',
   className = 'btn-ghost',
+  buildUrl,
+  periodHint = 'Период считается по основной дате журнала (для кассы — дата платежа).',
 }: {
-  journal: string;
+  journal: string; // используется в имени файла и в адресе выгрузки по умолчанию
   label?: string;
   className?: string;
+  buildUrl?: (period: { from?: string; to?: string }) => string; // для отчётов вне /api/export
+  periodHint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState('');
@@ -77,7 +81,7 @@ export function ExportPeriodButton({
     const suffix =
       period.from && period.to ? `_${period.from}--${period.to}` : period.from ? `_c-${period.from}` : period.to ? `_po-${period.to}` : '';
     try {
-      await downloadFile(exportUrl(journal, period), `${journal}${suffix}.xlsx`);
+      await downloadFile(buildUrl ? buildUrl(period) : exportUrl(journal, period), `${journal}${suffix}.xlsx`);
       setOpen(false);
     } catch {
       setError('Не удалось выгрузить — попробуйте ещё раз');
@@ -114,8 +118,7 @@ export function ExportPeriodButton({
             </div>
           </div>
           <p className="text-xs text-slate-400">
-            Обе даты включительно. Пустые поля — выгрузка за всё время. Период считается по основной дате журнала
-            (для кассы — дата платежа).
+            Обе даты включительно. Пустые поля — выгрузка за всё время. {periodHint}
           </p>
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <div className="flex justify-between gap-2">

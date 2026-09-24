@@ -24,6 +24,29 @@ type Row = Record<string, unknown>;
 const num = (v: unknown) => (v == null ? 0 : Number(v));
 const d = (v: Date | null | undefined) => (v ? new Date(v).toLocaleDateString('ru-RU') : '');
 
+// Период выгрузки: ?from=ГГГГ-ММ-ДД&to=ГГГГ-ММ-ДД (обе границы включительно).
+// Применяется к отчёту «Списания» (по дате списания); отчёты остатков/сроков —
+// это срез на текущий момент, период к ним не применяется.
+interface ExportPeriod {
+  from?: string;
+  to?: string;
+}
+function parseDay(v: string): Date {
+  const day = new Date(v + 'T00:00:00.000Z');
+  if (isNaN(day.getTime())) throw badRequest('Некорректная дата периода выгрузки (нужен формат ГГГГ-ММ-ДД)');
+  return day;
+}
+function dateWhere(p: ExportPeriod): Record<string, Date> | undefined {
+  const range: Record<string, Date> = {};
+  if (p.from) range.gte = parseDay(p.from);
+  if (p.to) {
+    const toExclusive = parseDay(p.to);
+    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+    range.lt = toExclusive;
+  }
+  return Object.keys(range).length ? range : undefined;
+}
+
 // Считает складские позиции с остатком, дефицитом и сроками (как /api/stock).
 async function stockRows(isAdmin: boolean) {
   const noms = await prisma.nomenclature.findMany({
@@ -64,7 +87,7 @@ async function stockRows(isAdmin: boolean) {
   });
 }
 
-async function buildReport(report: string, isAdmin: boolean): Promise<{ sheet: string; columns: Column[]; rows: Row[] }> {
+async function buildReport(report: string, isAdmin: boolean, period: ExportPeriod): Promise<{ sheet: string; columns: Column[]; rows: Row[] }> {
   switch (report) {
     case 'stock': {
       const rows = await stockRows(isAdmin);
@@ -109,21 +132,27 @@ async function buildReport(report: string, isAdmin: boolean): Promise<{ sheet: s
       return { sheet: 'Сроки годности', columns, rows: rows.map((r) => ({ ...r, nearest: r.nearest ? d(r.nearest) : '' })) };
     }
     case 'writeoffs': {
+      const range = dateWhere(period);
       const items = await prisma.expenseWriteoff.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, ...(range ? { date: range } : {}) },
         include: {
           patient: { select: { fio: true } },
           nomenclature: { select: { nameDisplay: true, unitWriteoff: true } },
           category: { select: { name: true } },
+          // Вид операции: из самого списания, при отсутствии — из привязанной операции.
+          operation: { select: { opType: true, dateOp: true } },
         },
         orderBy: { date: 'desc' },
       });
       const columns: Column[] = [
         { header: 'Дата', key: 'date', width: 14 },
+        { header: 'Дата записи', key: 'createdAt', width: 14 },
         { header: 'Пациент', key: 'patient', width: 28 },
         { header: 'Позиция', key: 'position', width: 30 },
         { header: 'Кол-во', key: 'qty', width: 10 },
         { header: 'Ед.', key: 'unit', width: 8 },
+        { header: 'Вид операции', key: 'opType', width: 24 },
+        { header: 'Дата операции', key: 'dateOp', width: 14 },
         { header: 'Категория', key: 'category', width: 18 },
         { header: 'Нехватка', key: 'shortage', width: 10 },
         ...(isAdmin ? [{ header: 'Себестоимость', key: 'costTotal', width: 16 }] : []),
@@ -133,10 +162,13 @@ async function buildReport(report: string, isAdmin: boolean): Promise<{ sheet: s
         columns,
         rows: items.map((w) => ({
           date: d(w.date),
+          createdAt: d(w.createdAt),
           patient: w.patient.fio,
           position: w.nomenclature.nameDisplay,
           qty: num(w.qty),
           unit: w.nomenclature.unitWriteoff ?? '',
+          opType: w.opType ?? w.operation?.opType ?? '',
+          dateOp: d(w.operation?.dateOp),
           category: w.category.name,
           shortage: w.isShortage ? 'да' : '',
           costTotal: num(w.costTotal),
@@ -153,9 +185,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const report = req.params.report.replace(/\.xlsx$/, '');
     const isAdmin = req.user!.role === 'admin';
-    const { sheet, columns, rows } = await buildReport(report, isAdmin);
+    const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const period: ExportPeriod = {
+      from: isDate(req.query.from) ? req.query.from : undefined,
+      to: isDate(req.query.to) ? req.query.to : undefined,
+    };
+    const { sheet, columns, rows } = await buildReport(report, isAdmin, period);
 
-    await writeAudit(req, { action: 'export', entity: `expense_${report}`, after: { rows: rows.length } });
+    await writeAudit(req, {
+      action: 'export',
+      entity: `expense_${report}`,
+      after: { rows: rows.length, from: period.from ?? null, to: period.to ?? null },
+    });
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet(sheet);
@@ -164,7 +205,9 @@ router.get(
     rows.forEach((r) => ws.addRow(r));
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${report}.xlsx"`);
+    // Только ASCII: кириллица в заголовке Content-Disposition недопустима.
+    const suffix = period.from && period.to ? `_${period.from}--${period.to}` : period.from ? `_since-${period.from}` : period.to ? `_until-${period.to}` : '';
+    res.setHeader('Content-Disposition', `attachment; filename="${report}${suffix}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   }),
