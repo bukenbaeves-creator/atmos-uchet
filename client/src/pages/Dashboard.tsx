@@ -15,8 +15,10 @@ import {
   YAxis,
 } from 'recharts';
 import { apiGet } from '../api/client';
-import { formatMoney, formatNumber } from '../lib/format';
+import { formatMoney, formatNumber, plural } from '../lib/format';
 import { PageHeader, Spinner } from '../components/ui';
+import { Link } from 'react-router-dom';
+import { useNotifications } from '../lib/notifications';
 
 interface DashboardData {
   kpi: { revenue: number; operations: number; consultations: number; conversion: number };
@@ -62,6 +64,7 @@ const PRESETS: { key: string; label: string; range: () => [string, string] }[] =
 ];
 
 export function Dashboard() {
+  const { data: notify } = useNotifications();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [preset, setPreset] = useState('all');
@@ -112,6 +115,28 @@ export function Dashboard() {
                   setPreset('');
                 }}
               />
+
+      {/* Требует действия администратора: приходы и новые позиции на согласовании */}
+      {(notify?.receiptsPending ?? 0) > 0 && (
+        <Link
+          to="/receipts"
+          className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
+        >
+          ⏳ <b>{notify?.receiptsPending}</b>{' '}
+          {plural(notify?.receiptsPending ?? 0, 'приход ожидает', 'прихода ожидают', 'приходов ожидают')} вашего согласования —
+          открыть «Приход на склад» →
+        </Link>
+      )}
+      {(notify?.nomenclatureDraft ?? 0) > 0 && (
+        <Link
+          to="/nomenclature"
+          className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
+        >
+          ⏳ <b>{notify?.nomenclatureDraft}</b>{' '}
+          {plural(notify?.nomenclatureDraft ?? 0, 'позиция номенклатуры ждёт', 'позиции номенклатуры ждут', 'позиций номенклатуры ждут')}{' '}
+          подтверждения — открыть «Номенклатуру» →
+        </Link>
+      )}
             </div>
             <div>
               <label className="label">По</label>

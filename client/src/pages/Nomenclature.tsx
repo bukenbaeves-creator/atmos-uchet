@@ -64,6 +64,7 @@ export function Nomenclature() {
       setBulkConfirming(false);
       qc.invalidateQueries({ queryKey: ['nomenclature'] });
       qc.invalidateQueries({ queryKey: ['stock'] });
+              qc.invalidateQueries({ queryKey: ['notifications'] });
     } catch (err) {
       setBulkError(err instanceof ApiError ? err.message : 'Не удалось подтвердить выбранные');
     } finally {
@@ -171,6 +172,7 @@ export function Nomenclature() {
             onSaved={() => {
               qc.invalidateQueries({ queryKey: ['nomenclature'] });
               qc.invalidateQueries({ queryKey: ['stock'] });
+              qc.invalidateQueries({ queryKey: ['notifications'] });
             }}
           />
         )}
@@ -185,6 +187,7 @@ export function Nomenclature() {
             onSaved={() => {
               qc.invalidateQueries({ queryKey: ['nomenclature'] });
               qc.invalidateQueries({ queryKey: ['stock'] });
+              qc.invalidateQueries({ queryKey: ['notifications'] });
             }}
           />
         )}
@@ -198,6 +201,7 @@ export function Nomenclature() {
             onSaved={() => {
               qc.invalidateQueries({ queryKey: ['nomenclature'] });
               qc.invalidateQueries({ queryKey: ['stock'] });
+              qc.invalidateQueries({ queryKey: ['notifications'] });
             }}
           />
         )}

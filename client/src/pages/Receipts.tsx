@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch, apiUpload, apiDelete, ApiError, receiptTemplateUrl } from '../api/client';
 import type { ListResponse } from '../api/hooks';
-import { formatDate, isExpired } from '../lib/format';
+import { formatDate, isExpired, plural } from '../lib/format';
 import { PageHeader, Spinner, EmptyState, Modal, Pagination, Hint, Badge } from '../components/ui';
 import { Table, type Column } from '../components/Table';
 import { MoneyInput } from '../components/MoneyInput';
 import { useAuth } from '../lib/auth';
+import { useNotifications } from '../lib/notifications';
 
 interface Batch {
   id: number;
@@ -91,13 +92,18 @@ export function Receipts() {
   const [detail, setDetail] = useState<Receipt | null>(null);
 
   const refresh = () => {
-    for (const k of ['receipts', 'stock', 'nomenclature']) qc.invalidateQueries({ queryKey: [k] });
+    for (const k of ['receipts', 'stock', 'nomenclature', 'notifications']) qc.invalidateQueries({ queryKey: [k] });
   };
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['receipts', { page }],
     queryFn: () => apiGet<ListResponse<Receipt>>(`/receipts?page=${page}`),
   });
+  // Сколько приходов ждёт согласования (для админа — все, для медсестры — её собственные)
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const { data: notify } = useNotifications();
+  const pendingCount = notify?.receiptsPending ?? 0;
 
   const columns: Column<Receipt>[] = [
     { header: 'Дата', cell: (r) => formatDate(r.date) },
@@ -124,6 +130,15 @@ export function Receipts() {
           </>
         }
       />
+
+      {pendingCount > 0 && (
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+          ⏳ <b>{pendingCount}</b> {plural(pendingCount, 'приход', 'прихода', 'приходов')}{' '}
+          {isAdmin
+            ? `${plural(pendingCount, 'ожидает', 'ожидают', 'ожидают')} вашего согласования — откройте запись и нажмите «Одобрить».`
+            : `${plural(pendingCount, 'ожидает', 'ожидают', 'ожидают')} согласования администратора.`}
+        </div>
+      )}
 
       {isError ? (
         <EmptyState>Не удалось загрузить данные. Обновите страницу или войдите заново.</EmptyState>

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, ROLE_LABEL, type Role } from '../lib/auth';
 import { loadSession, saveSession, clearSession } from '../lib/persist';
+import { useNotifications, type NotificationSummary } from '../lib/notifications';
 
 // «Память» раздела «Выплаты»: пункт меню возвращает на последнюю открытую страницу раздела
 // (реестр, ведомость, расшифровка), а не в список. Повторный клик по активному пункту —
@@ -15,6 +16,8 @@ interface NavItem {
   icon: string;
   end?: boolean;
   roles?: Role[]; // если задано — пункт виден только этим ролям
+  // Счётчик «требует внимания» рядом с пунктом (данные — /api/notifications/summary)
+  badge?: keyof NotificationSummary;
 }
 
 interface Section {
@@ -65,8 +68,8 @@ const SECTIONS: Section[] = [
       { to: '/writeoffs', label: 'Расход материалов', icon: '💊' },
       { to: '/stock', label: 'Склад · остатки', icon: '📦' },
       { to: '/revisions', label: 'Ревизия', icon: '🧮', roles: ['nurse', 'admin'] },
-      { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️' },
-      { to: '/receipts', label: 'Приход', icon: '📥', roles: ['nurse', 'admin'] },
+      { to: '/nomenclature', label: 'Номенклатура', icon: '🏷️', badge: 'nomenclatureDraft' },
+      { to: '/receipts', label: 'Приход', icon: '📥', roles: ['nurse', 'admin'], badge: 'receiptsPending' },
       { to: '/expense-analytics', label: 'Аналитика расхода', icon: '📈', roles: ['admin'] },
     ],
   },
@@ -110,6 +113,9 @@ export function Layout() {
     .filter((s) => visible(s.roles))
     .map((s) => ({ ...s, items: s.items.filter((n) => visible(n.roles)) }))
     .filter((s) => s.items.length > 0);
+
+  // Счётчики «требует внимания» (приходы на согласовании и т.п.).
+  const { data: notify } = useNotifications();
 
   // Запоминаем последний путь внутри разделов «Выплат» при каждом переходе.
   const location = useLocation();
@@ -156,7 +162,16 @@ export function Layout() {
                       }
                     }}
                   >
-                    <span className="text-base">{n.icon}</span> {n.label}
+                    <span className="text-base">{n.icon}</span>
+                    <span className="flex-1">{n.label}</span>
+                    {n.badge && (notify?.[n.badge] ?? 0) > 0 && (
+                      <span
+                        className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1.5 text-xs font-semibold text-white"
+                        title="Ожидает вашего действия"
+                      >
+                        {notify?.[n.badge]}
+                      </span>
+                    )}
                   </NavLink>
                 );
               })}
