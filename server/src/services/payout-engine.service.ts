@@ -267,7 +267,19 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
   const fullyPaid = base > 0 && paidTotal + 0.005 >= base;
   // Причина пропуска — для сводки кнопки «Пересчитать» (чтобы было понятно, почему
   // врача нет в ведомости). Одна запись на операцию.
-  if (!fullyPaid) {
+  // РАССРОЧКА КЛИНИКИ (решение заказчика): при действующем плане рассрочки врачу с долевой
+  // схемой начисляется не разом после 100%, а частями — по мере поступления платежей СВЕРХ
+  // первоначального взноса. Со взноса врачу ничего не начисляется, а полная выплата
+  // распределяется по ежемесячным платежам пропорционально их сумме.
+  // Без плана (или если взнос не меньше базы) действует обычное правило 100%.
+  const plan = await tx.installmentPlan.findFirst({ where: { operationId: op.id, deletedAt: null }, orderBy: { id: 'desc' } });
+  const downPayment = plan ? toNum(plan.downPayment) : 0;
+  const installment = plan && base > 0 && downPayment > 0 && downPayment + 0.005 < base ? { downPayment, contractNumber: plan.contractNumber } : null;
+  if (installment) {
+    if (paidTotal <= downPayment + 0.005) {
+      ctx?.errors?.push({ operationId: op.id, message: 'Рассрочка: оплачен только первоначальный взнос — начислений врачу пока нет' });
+    }
+  } else if (!fullyPaid) {
     ctx?.errors?.push({
       operationId: op.id,
       message: base > 0 ? 'Операция не оплачена на 100% — права на выплату пока нет' : 'У операции не заполнена стоимость (база 0)',
@@ -319,7 +331,96 @@ export async function recalcOperation(operationId: number, tx: PrismaClientOrTx,
     let target = 0; // целевая сумма начислений по операции (0, пока право не наступило)
     let lastSharePct = 0;
 
-    if (fullyPaid) {
+    if (installment) {
+      // Начисление на каждый платёж сверх взноса (ключ идемпотентности — triggerPaymentId).
+      // «Должно быть начислено всего» = amountFull(платежи до события) × коэффициент, где
+      // коэффициент = (оплачено − взнос) / (база − взнос), в пределах 0…1. Разница с ранее
+      // начисленным оформляется событием; возврат даёт отрицательное событие.
+      const dp = installment.downPayment;
+      const financed = base - dp;
+      const byTrigger = new Map<number, (typeof existing)[number]>();
+      for (const e of existing) if (e.triggerPaymentId != null) byTrigger.set(e.triggerPaymentId, e);
+      const seen = new Set<number>();
+      let cum = 0;
+      let priorTarget = 0; // целевая накопленная сумма (по расчёту, независимо от блокировок)
+      let priorRatio = 0;
+      // База и компоненты события — разница накопленных значений (а не доля × сумма):
+      // так сумма по всем событиям сходится с полной базой без накопления копеек.
+      let priorBase = 0;
+      const priorComp = new Map<string, number>();
+      for (let i = 0; i < payments.length; i++) {
+        const p = payments[i];
+        cum += (p.direction === 'refund' ? -1 : 1) * toNum(p.amount);
+        const ratio = Math.min(1, Math.max(0, (cum - dp) / financed));
+        if (ratio <= 0 && priorRatio <= 0) continue; // платёж в пределах взноса — врачу 0
+        // Комиссия банка считается по фактически поступившим платежам → платежи до события.
+        const paymentsSoFar = payments.slice(0, i + 1).map((x) => ({
+          amount: toNum(x.amount),
+          terminal: x.terminal,
+          date: x.date ? toISODate(x.date) : operationInput.dateOp,
+          direction: (x.direction as 'payment' | 'refund') ?? 'payment',
+          payMethod: x.payMethod,
+        }));
+        const calc = calcPayout({ operation: operationInput, payments: paymentsSoFar, scheme: calcScheme, acquiringRates, materialsFact, materialNorm, opTypeTables });
+        lastSharePct = calc.sharePct;
+        const targetCum = round2(calc.amountFull * ratio);
+        const delta = round2(targetCum - priorTarget);
+        const baseCum = round2(base * ratio);
+        const eventBase = round2(baseCum - priorBase);
+        const eventComponents = calc.components.map((c) => {
+          const cumAmount = round2(c.amount * ratio);
+          const amount = round2(cumAmount - (priorComp.get(c.code) ?? 0));
+          priorComp.set(c.code, cumAmount);
+          return { ...c, amount };
+        });
+        priorTarget = targetCum;
+        priorRatio = ratio;
+        priorBase = baseCum;
+        if (Math.abs(delta) < 0.005) continue;
+        seen.add(p.id);
+        const pDate = p.date ?? op.dateOp;
+        const data = {
+          schemeId: scheme.id,
+          schemeVersion: scheme.version,
+          triggerPaymentId: p.id,
+          // Не раньше даты операции: оплаченное заранее попадает в ведомость месяца проведения.
+          eventDate: pDate.getTime() > op.dateOp.getTime() ? pDate : op.dateOp,
+          isCorrection: false,
+          // База и компоненты — в доле этого события, чтобы итоги реестра ведомости
+          // («База», колонки компонентов) не задваивались при нескольких частях одной операции.
+          base: eventBase,
+          paidRatio: ratio,
+          sharePct: calc.sharePct,
+          components: eventComponents as unknown as object,
+          amountFull: calc.amountFull,
+          amount: delta,
+          calcTrace: [
+            ...calc.calcTrace,
+            {
+              label: `Рассрочка (договор ${installment.contractNumber}): первоначальный взнос ${Math.round(dp).toLocaleString('ru-RU')} в выплату не входит`,
+            },
+            {
+              label: `Оплачено сверх взноса ${Math.round(Math.max(0, cum - dp)).toLocaleString('ru-RU')} из ${Math.round(financed).toLocaleString('ru-RU')} после платежа ${fmtRuDate(pDate)}`,
+              value: ratio,
+            },
+            { label: 'Начислено этим платежом', value: delta },
+          ] as unknown as object,
+        };
+        const ex = byTrigger.get(p.id);
+        if (ex) {
+          if (ex.status === 'free') await tx.payoutAccrual.update({ where: { id: ex.id }, data });
+        } else {
+          await tx.payoutAccrual.create({ data: { ...data, payeeId: part.payeeId, operationId: op.id } });
+        }
+      }
+      // Свободные начисления, у которых больше нет события (платёж удалён, сумма стала 0).
+      for (const e of existing) {
+        if (e.status === 'free' && (e.triggerPaymentId == null || !seen.has(e.triggerPaymentId))) {
+          await tx.payoutAccrual.delete({ where: { id: e.id } });
+        }
+      }
+      target = priorTarget;
+    } else if (fullyPaid) {
       const allPayments = payments.map((x) => ({
         amount: toNum(x.amount),
         terminal: x.terminal,
