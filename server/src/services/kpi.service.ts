@@ -108,7 +108,12 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
         patient: { is: { deletedAt: null } },
         dateOp: { gte: from, lt: toExclusive, lte: now },
       },
-      include: { ...patientSel, payments: { where: { deletedAt: null } } },
+      include: {
+        ...patientSel,
+        payments: { where: { deletedAt: null } },
+        // Действующая рассрочка клиники: операция засчитывается после внесения взноса.
+        installmentPlans: { where: { deletedAt: null }, select: { id: true, downPayment: true } },
+      },
       orderBy: { dateOp: 'asc' },
     }),
   ]);
@@ -135,12 +140,22 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
   }
   // Классификация операций: в расчёт только реально оплаченные на 100% (и стоимость > 0,
   // иначе нулевая/черновая операция считалась бы «оплаченной» и накручивала бы KPI).
+  // Исключение — рассрочка клиники (решение заказчика): операция с оформленной рассрочкой
+  // засчитывается сразу, как только первоначальный взнос фактически внесён в Кассу.
+  const installmentCounted = (o: (typeof opsAll)[number], paid: number): boolean => {
+    const plan = o.installmentPlans[0];
+    return !!plan && paid + 0.005 >= Number(plan.downPayment);
+  };
   const countedOps: typeof opsAll = [];
   const unpaidOps: typeof opsAll = [];
+  const byInstallment = new Set<number>(); // id операций, засчитанных по рассрочке (не по 100% оплате)
   for (const o of opsAll) {
     const comp = computeOperation(o as Parameters<typeof computeOperation>[0]);
-    if (comp.fullyPaid && comp.totalDue > 0) countedOps.push(o);
-    else unpaidOps.push(o);
+    if (comp.totalDue > 0 && comp.fullyPaid) countedOps.push(o);
+    else if (comp.totalDue > 0 && installmentCounted(o, comp.paid)) {
+      countedOps.push(o);
+      byInstallment.add(o.id);
+    } else unpaidOps.push(o);
   }
 
   // Счётчики по менеджеру: онлайн (vid='Онлайн') / офлайн / операции.
@@ -212,6 +227,7 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
     opType: o.opType,
     surgeon: o.surgeon,
     cost: o.cost != null ? Number(o.cost) : null,
+    installment: byInstallment.has(o.id), // засчитана по рассрочке клиники (взнос внесён)
   }));
   const excludedConsultations = excludedCons.map((c) => ({
     id: c.id,
@@ -270,6 +286,7 @@ async function computeReward(from: Date, toExclusive: Date, label: string) {
       cost: o.cost != null ? Number(o.cost) : null,
       paid: comp.paid,
       balance: comp.balance,
+      installment: o.installmentPlans.length > 0, // рассрочка оформлена, но взнос ещё не внесён
     };
   });
 
