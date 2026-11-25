@@ -113,7 +113,7 @@ export function Table<T extends { id: number }>({
               return (
                 <th
                   key={i}
-                  className={`relative whitespace-nowrap border-b border-slate-200 bg-slate-50/95 px-3.5 py-2.5 text-xs font-semibold uppercase tracking-wide backdrop-blur ${alignCls(
+                  className={`relative whitespace-nowrap border-b border-slate-200 bg-slate-50/95 px-2.5 py-2.5 text-xs xl:px-3.5 font-semibold uppercase tracking-wide backdrop-blur ${alignCls(
                     c.align,
                   )} ${active ? 'text-brand-600' : 'text-slate-500'}`}
                 >
@@ -168,7 +168,7 @@ export function Table<T extends { id: number }>({
               {columns.map((c, i) => (
                 <td
                   key={i}
-                  className={`border-b border-slate-100 px-3.5 py-2.5 align-middle ${alignCls(c.align)} ${c.className ?? ''}`}
+                  className={`border-b border-slate-100 px-2.5 py-2.5 align-middle xl:px-3.5 ${alignCls(c.align)} ${c.className ?? ''}`}
                 >
                   {c.cell(row)}
                 </td>

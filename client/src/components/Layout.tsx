@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, ROLE_LABEL, type Role } from '../lib/auth';
 import { loadSession, saveSession, clearSession } from '../lib/persist';
@@ -103,8 +103,29 @@ export function Layout() {
   const role = (user?.role ?? 'operator') as Role;
   const roleLabel = ROLE_LABEL[role] ?? 'Пользователь';
 
+  // Свёрнутое меню (только значки) освобождает место под таблицы на небольших экранах.
+  // По умолчанию свёрнуто на узком окне; выбор пользователя запоминается в браузере.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('menuCollapsed');
+      if (saved !== null) return saved === '1';
+    } catch {
+      /* хранилище недоступно — берём значение по ширине окна */
+    }
+    return window.innerWidth < 1280;
+  });
+  const toggleMenu = () =>
+    setCollapsed((v) => {
+      try {
+        localStorage.setItem('menuCollapsed', v ? '0' : '1');
+      } catch {
+        /* не критично */
+      }
+      return !v;
+    });
+
   const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+    `relative flex items-center gap-2.5 rounded-lg py-2 text-sm transition ${collapsed ? 'justify-center px-2' : 'px-3'} ${
       isActive ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
     }`;
 
@@ -131,19 +152,37 @@ export function Layout() {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="px-5 py-4">
-          <div className="text-lg font-bold text-brand-600">ATMOS</div>
-          <div className="text-xs text-slate-400">учёт продаж и операций</div>
+      <aside className={`flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] ${collapsed ? 'w-16' : 'w-60'}`}>
+        <div className={`flex items-center py-4 ${collapsed ? 'justify-center px-2' : 'justify-between px-5'}`}>
+          {!collapsed && (
+            <div>
+              <div className="text-lg font-bold text-brand-600">ATMOS</div>
+              <div className="text-xs text-slate-400">учёт продаж и операций</div>
+            </div>
+          )}
+          <button
+            type="button"
+            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+            title={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            onClick={toggleMenu}
+          >
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M3 5h14M3 10h14M3 15h14" />
+            </svg>
+          </button>
         </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
+        <nav className={`flex-1 space-y-0.5 overflow-y-auto pb-4 ${collapsed ? 'px-2' : 'px-3'}`}>
           {sections.map((sec, i) => (
             <div key={i} className="mb-1">
-              {sec.title && (
-                <div className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  {sec.title}
-                </div>
-              )}
+              {sec.title &&
+                (collapsed ? (
+                  <div className="mx-2 my-2 border-t border-slate-100" />
+                ) : (
+                  <div className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    {sec.title}
+                  </div>
+                ))}
               {sec.items.map((n) => {
                 const remembered = remembers(n) ? loadSession<string | null>(`lastPath:${n.to}`, null) : null;
                 const active = remembers(n) && inSection(location.pathname, n.to);
@@ -153,7 +192,9 @@ export function Layout() {
                     to={remembered ?? n.to}
                     end={n.end}
                     className={({ isActive }) => linkClass({ isActive: isActive || active })}
-                    title={remembered && remembered !== n.to ? 'Вернуться туда, где были. Повторный клик — в список' : undefined}
+                    title={
+                      collapsed ? n.label : remembered && remembered !== n.to ? 'Вернуться туда, где были. Повторный клик — в список' : undefined
+                    }
                     onClick={(e) => {
                       // Уже внутри раздела: клик по пункту ведёт в корень (список) и сбрасывает память.
                       if (active && location.pathname !== n.to) {
@@ -164,10 +205,12 @@ export function Layout() {
                     }}
                   >
                     <span className="text-base">{n.icon}</span>
-                    <span className="flex-1">{n.label}</span>
+                    {!collapsed && <span className="flex-1">{n.label}</span>}
                     {n.badge && (notify?.[n.badge] ?? 0) > 0 && (
                       <span
-                        className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1.5 text-xs font-semibold text-white"
+                        className={`inline-flex items-center justify-center rounded-full bg-rose-500 font-semibold text-white ${
+                          collapsed ? 'absolute -right-0.5 -top-0.5 min-w-[16px] px-1 text-[10px]' : 'ml-auto min-w-[20px] px-1.5 text-xs'
+                        }`}
                         title="Ожидает вашего действия"
                       >
                         {notify?.[n.badge]}
@@ -179,23 +222,28 @@ export function Layout() {
             </div>
           ))}
         </nav>
-        <div className="border-t border-slate-100 p-3">
-          <div className="px-2 text-sm font-medium text-slate-700">{user?.fio}</div>
-          <div className="px-2 text-xs text-slate-400">{roleLabel}</div>
-          <button className="btn-ghost mt-2 w-full" onClick={() => logout()}>
-            Выйти
+        <div className={`border-t border-slate-100 ${collapsed ? 'p-2' : 'p-3'}`}>
+          {!collapsed && (
+            <>
+              <div className="px-2 text-sm font-medium text-slate-700">{user?.fio}</div>
+              <div className="px-2 text-xs text-slate-400">{roleLabel}</div>
+            </>
+          )}
+          <button className={`btn-ghost w-full ${collapsed ? 'px-0' : 'mt-2'}`} title="Выйти" onClick={() => logout()}>
+            {collapsed ? '⎋' : 'Выйти'}
           </button>
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-w-0 flex-1 overflow-y-auto">
         {/* Верхняя панель: кто сейчас работает в приложении */}
-        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-6 py-2 text-sm backdrop-blur">
+        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-4 py-2 text-sm backdrop-blur xl:px-6">
           <span className="text-slate-400">Вы вошли как:</span>
           <span className="font-semibold text-slate-700">{user?.fio}</span>
           <span className="badge bg-brand-50 text-brand-700">{roleLabel}</span>
         </div>
-        <div className="mx-auto max-w-7xl p-6">
+        {/* Контент занимает всю ширину окна: на большом мониторе таблицы помещаются без прокрутки. */}
+        <div className="mx-auto max-w-[1920px] p-4 xl:p-6">
           <Outlet />
         </div>
       </main>
