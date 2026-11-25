@@ -36,6 +36,7 @@ const SECTIONS: Section[] = [
     items: [
       { to: '/patients', label: 'Пациенты', icon: '🧑', roles: SALES },
       { to: '/cashbox', label: 'Касса', icon: '🧾', roles: SALES },
+      { to: '/installments', label: 'Рассрочка', icon: '📅', roles: SALES, badge: 'installmentsDue' },
     ],
   },
   {

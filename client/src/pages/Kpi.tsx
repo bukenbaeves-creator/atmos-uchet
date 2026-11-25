@@ -179,6 +179,7 @@ interface OpRow {
   opType: string | null;
   surgeon: string | null;
   cost: number | null;
+  installment?: boolean; // рассрочка клиники
 }
 interface ExclRow {
   id: number;
@@ -454,7 +455,20 @@ function RewardTab({ from, to }: { from: string; to: string }) {
         ),
     },
     { header: 'Дата операции', cell: (r) => formatDate(r.dateOp) },
-    { header: 'Вид операции', cell: (r) => r.opType ?? '—' },
+    {
+      header: 'Вид операции',
+      cell: (r) => (
+        <>
+          {r.opType ?? '—'}
+          {/* Засчитана по рассрочке клиники: взнос внесён, полной оплаты ещё нет */}
+          {r.installment && (
+            <span className="ml-2">
+              <Badge tone="blue">рассрочка</Badge>
+            </span>
+          )}
+        </>
+      ),
+    },
     { header: 'Хирург', cell: (r) => r.surgeon ?? '—' },
     { header: 'Стоимость', align: 'right', cell: (r) => formatMoney(r.cost ?? 0) },
     { header: 'Менеджер', cell: (r) => r.manager ?? '—' },

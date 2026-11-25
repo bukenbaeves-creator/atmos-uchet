@@ -28,9 +28,12 @@ export function useList<T>(entity: string, params: Record<string, unknown> = {})
 // patient-card/errors — отдельные ключи, а не «reports»). invalidateQueries по
 // префиксу накрывает и производные (['patients','picker',…] и т.п.).
 const RELATED_KEYS: Record<string, string[]> = {
-  payments: ['payments', 'operations', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries'],
+  // Платёж закрывает строки графика рассрочки → обновляем раздел «Рассрочка» и счётчик напоминаний.
+  payments: ['payments', 'operations', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries', 'installments', 'notifications'],
   consultations: ['consultations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'dictionaries'],
-  operations: ['operations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors'],
+  operations: ['operations', 'payments', 'prepayments', 'dashboard', 'kpi-report', 'patient-card', 'errors', 'installments', 'notifications'],
+  // Рассрочка клиники: оформление влияет на KPI менеджера (зачёт после взноса) и напоминания.
+  installments: ['installments', 'notifications', 'kpi-report'],
   patients: ['patients', 'consultations', 'operations', 'payments', 'prepayments', 'dashboard', 'patient-card', 'errors'],
   // Модуль расходов: списание меняет остаток склада; приход меняет склад и номенклатуру
   writeoffs: ['writeoffs', 'stock', 'nomenclature', 'patients'],

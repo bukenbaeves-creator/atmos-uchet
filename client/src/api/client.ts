@@ -80,6 +80,8 @@ export const expenseExportUrl = (report: string, period?: { from?: string; to?: 
   const qs = q.toString();
   return `${BASE}/api/expense-export/${report}.xlsx${qs ? `?${qs}` : ''}`;
 };
+// График платежей по рассрочке клиники (Excel с формулами)
+export const installmentScheduleUrl = (id: number) => `${BASE}/api/installments/${id}/schedule.xlsx`;
 // Шаблон для импорта прихода
 export const receiptTemplateUrl = () => `${BASE}/api/receipts/template.xlsx`;
 // Скачивание резервной копии БД (JSON)

@@ -9,6 +9,7 @@ import { Consultations } from './pages/Consultations';
 import { Operations } from './pages/Operations';
 import { Prepayments } from './pages/Prepayments';
 import { Cashbox } from './pages/Cashbox';
+import { Installments } from './pages/Installments';
 import { Reconcile } from './pages/Reconcile';
 import { Kpi } from './pages/Kpi';
 import { ErrorCheck } from './pages/ErrorCheck';
@@ -93,6 +94,7 @@ export function App() {
         <Route path="/operations" element={<RequireRole roles={SALES}><Operations /></RequireRole>} />
         <Route path="/prepayments" element={<RequireRole roles={SALES}><Prepayments /></RequireRole>} />
         <Route path="/cashbox" element={<RequireRole roles={SALES}><Cashbox /></RequireRole>} />
+        <Route path="/installments" element={<RequireRole roles={SALES}><Installments /></RequireRole>} />
         <Route path="/reconcile" element={<RequireRole roles={SALES}><Reconcile /></RequireRole>} />
         <Route path="/kpi" element={<RequireRole roles={SALES}><Kpi /></RequireRole>} />
         <Route path="/dictionaries" element={<RequireRole roles={SALES}><Dictionaries /></RequireRole>} />

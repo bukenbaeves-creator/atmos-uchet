@@ -10,6 +10,8 @@ import { useDictionaries } from '../lib/dictionaries';
 import { useAuth } from '../lib/auth';
 import type { Field } from '../components/EntityForm';
 import type { Column } from '../components/Table';
+import { InstallmentFields } from '../components/InstallmentFields';
+import { emptyInstallment, installmentPayload, type InstallmentValue } from '../lib/installment';
 
 interface RescheduleRow {
   id: number;
@@ -103,6 +105,10 @@ export function Operations() {
     const asst = parts.find((p) => p.role === 'assistant');
     const anes = parts.find((p) => p.role === 'anesthesiologist');
     return {
+      // Рассрочка клиники оформляется вместе с НОВОЙ операцией; для существующей — в разделе «Рассрочка».
+      _isNew: !editing,
+      _installmentOn: false,
+      _installment: emptyInstallment(),
       _assistantPayeeId: asst ? String(asst.payeeId) : '',
       _anesthesiaType: anes?.anesthesiaType ?? '',
       _shiftDay: anes?.shiftDay ?? false,
@@ -113,7 +119,47 @@ export function Operations() {
   // Блок «Участники». Хирург и анестезиолог берутся из полей «Врач»/«Анестезиолог»
   // (единый контрол — не дублируем ввод). Здесь — статус привязки к получателю,
   // ассистент, тип наркоза и дежурство.
-  const renderFormExtra = (values: Record<string, unknown>, set: (n: string, v: unknown) => void) => {
+  const renderFormExtra = (values: Record<string, unknown>, set: (n: string, v: unknown) => void) => (
+    <div className="space-y-3">
+      {renderInstallment(values, set)}
+      {renderParticipants(values, set)}
+    </div>
+  );
+
+  // Блок «Оплата в рассрочку»: флажок → поля (взнос, срок, даты) и автоматический график.
+  const renderInstallment = (values: Record<string, unknown>, set: (n: string, v: unknown) => void) => {
+    if (!values._isNew) {
+      return (
+        <div className="rounded-lg border border-slate-200 p-3 text-sm text-slate-500">
+          Рассрочка для уже созданной операции оформляется и меняется в разделе «Рассрочка».
+        </div>
+      );
+    }
+    const on = Boolean(values._installmentOn);
+    const totalCost = (Number(values.cost) || 0) + (Number(values.anesthesiaCost) || 0);
+    return (
+      <div className="rounded-lg border border-slate-200 p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <input type="checkbox" checked={on} onChange={(e) => set('_installmentOn', e.target.checked)} /> Оплата в рассрочку
+          <span className="font-normal text-slate-400">— беспроцентная рассрочка клиники с графиком платежей</span>
+        </label>
+        {on && (
+          <div className="mt-3">
+            <InstallmentFields
+              totalCost={totalCost}
+              value={values._installment as InstallmentValue}
+              onChange={(v) => set('_installment', v)}
+            />
+            <p className="mt-2 text-xs text-slate-400">
+              Первоначальный взнос и ежемесячные платежи вносятся в Кассе как платежи по этой операции. График можно скачать в разделе «Рассрочка».
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderParticipants = (values: Record<string, unknown>, set: (n: string, v: unknown) => void) => {
     if (!isAdmin) return null; // привязка участников — только у администратора
     const surgeonLabel = (values.surgeon as string) || '';
     const anesLabel = (values.anesthesiologist as string) || '';
@@ -169,7 +215,12 @@ export function Operations() {
 
   // Сборка participants из строковых полей и служебных ключей. Отправляем только когда
   // список получателей загружен — иначе рискуем стереть уже привязанных участников.
-  const transformPayload = (payload: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> => {
+  const transformPayload = (base: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> => {
+    // Рассрочка клиники — только при создании операции и только при включённом флажке.
+    const payload =
+      values._isNew && values._installmentOn
+        ? { ...base, installment: installmentPayload(values._installment as InstallmentValue) }
+        : base;
     if (!isAdmin || !payeesData) return payload;
     const parts: Record<string, unknown>[] = [];
     const surgeon = (values.surgeon as string) || '';

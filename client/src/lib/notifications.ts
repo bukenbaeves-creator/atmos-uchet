@@ -7,6 +7,8 @@ import { apiGet } from '../api/client';
 export interface NotificationSummary {
   receiptsPending: number;
   nomenclatureDraft: number;
+  // Платежи по рассрочке: просрочено + сегодня + в ближайшие 2 дня
+  installmentsDue: number;
 }
 
 export function useNotifications() {
