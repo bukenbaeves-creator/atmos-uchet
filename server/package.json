@@ -17,7 +17,9 @@
     "reset:payouts": "tsx src/scripts/reset-payouts.ts",
     "test:derive": "tsx src/scripts/test-payout-derive.ts",
     "test:materials": "tsx src/scripts/test-payout-materials.ts",
-    "test:components": "tsx src/scripts/test-payout-components.ts"
+    "test:components": "tsx src/scripts/test-payout-components.ts",
+    "test:installment": "tsx src/scripts/test-installment-schedule.ts",
+    "test:installment-payout": "tsx src/scripts/test-payout-installment.ts"
   },
   "prisma": {
     "seed": "tsx src/seed/index.ts"

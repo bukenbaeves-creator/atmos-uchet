@@ -55,6 +55,9 @@ export interface CrudConfig {
   // Хук после мягкого удаления (например, пересчёт начислений выплат по операции).
   // Вызывается в той же транзакции; record — запись до удаления. По умолчанию ничего не делает.
   afterDelete?: (record: Record<string, unknown>, req: Request, tx: PrismaClientOrTx) => Promise<void>;
+  // Хук после восстановления (например, пересчёт начислений по восстановленной рассрочке).
+  // Вызывается в той же транзакции. По умолчанию ничего не делает.
+  afterRestore?: (restored: Record<string, unknown>, req: Request, tx: PrismaClientOrTx) => Promise<void>;
 }
 
 async function present(cfg: CrudConfig, row: Record<string, unknown>) {
@@ -202,6 +205,7 @@ export function makeCrudRouter(cfg: CrudConfig): Router {
         });
         await writeAudit(req, { action: 'restore', entity: cfg.entity, entityId: id, before: existing, after: row }, tx);
         await cascadeRestore(cfg.entity, id, req, tx);
+        if (cfg.afterRestore) await cfg.afterRestore(row, req, tx);
         return row;
       });
       res.json(await present(cfg, updated));

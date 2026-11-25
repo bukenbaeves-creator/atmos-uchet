@@ -13,6 +13,8 @@ import { patientInputSchema, requiredDate, requiredString, optionalString, money
 import { patientSearchOR } from '../lib/search.js';
 import { dateRange, eqStr } from '../lib/filters.js';
 import { recalcOperation } from '../services/payout-engine.service.js';
+import { buildPlanData } from '../services/installment.service.js';
+import { installmentFieldsSchema } from './installments.js';
 
 // Один участник операции (Э1-3). Используется и в схеме операции, и в хуках синхронизации.
 const participantSchema = z.object({
@@ -101,6 +103,9 @@ const schema = z.object({
   // Разрешить создать операцию, даже если у пациента уже есть такая же на эту дату
   // (галочка в форме). Не пишется в БД — только гейт для проверки на дубль.
   confirmDuplicate: z.coerce.boolean().optional(),
+  // Оплата в рассрочку (клиника): при создании операции сразу оформляется план с графиком
+  // платежей — в той же транзакции. Не поле операции; при правке игнорируется.
+  installment: installmentFieldsSchema.optional().nullable(),
 }).refine((d) => d.patient?.birthDate != null, {
   // Для операции дата рождения пациента обязательна (в отличие от прочих форм).
   message: 'Необходимо указать дату рождения пациента',
@@ -171,7 +176,7 @@ const router = makeCrudRouter({
   prepareData: async (data, req, ctx) => {
     // participants — связь, а не скалярное поле операции: убираем из данных записи,
     // сохраняем отдельно в afterCreate/afterUpdate (та же транзакция).
-    const { patient, confirmDuplicate, participants: _participants, ...rest } = data as Record<string, unknown> & {
+    const { patient, confirmDuplicate, participants: _participants, installment: _installment, ...rest } = data as Record<string, unknown> & {
       patient: never;
     };
     const patientId = await resolvePatient(patient, req, ctx.tx);
@@ -200,6 +205,21 @@ const router = makeCrudRouter({
     if (req.body?.participants !== undefined) {
       const parts = z.array(participantSchema).parse(req.body.participants ?? []);
       await syncParticipants(tx, created.id as number, created.surgeon as string | null, parts, req.user!.id);
+    }
+    // Рассрочка клиники — до пересчёта начислений: движок выплат учитывает действующий план.
+    if (req.body?.installment) {
+      const input = installmentFieldsSchema.parse(req.body.installment);
+      const { data, items } = await buildPlanData(tx, { ...input, operationId: created.id as number });
+      const plan = await tx.installmentPlan.create({
+        data: {
+          ...(data as Parameters<typeof tx.installmentPlan.create>[0]['data']),
+          createdBy: req.user!.id,
+          updatedBy: req.user!.id,
+          items: { create: items.map((i) => ({ seq: i.seq, dueDate: i.dueDate, amount: i.amount })) },
+        },
+        include: { items: true },
+      });
+      await writeAudit(req, { action: 'create', entity: 'installmentPlan', entityId: plan.id, after: plan }, tx);
     }
     await recalcOperation(created.id as number, tx); // Э2-3: пересчёт начислений
   },

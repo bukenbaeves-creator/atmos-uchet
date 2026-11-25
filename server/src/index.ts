@@ -30,6 +30,7 @@ import expenseAnalyticsRouter from './routes/expense-analytics.js';
 import revisionsRouter from './routes/revisions.js';
 import backupRouter from './routes/backup.js';
 import notificationsRouter from './routes/notifications.js';
+import installmentsRouter from './routes/installments.js';
 // Модуль «Выплаты врачам» — конструктор (Э0-3)
 import payoutPayeesRouter from './routes/payouts/payees.js';
 import payoutComponentsRouter from './routes/payouts/components.js';
@@ -112,6 +113,8 @@ app.use('/api/expense-analytics', expenseAnalyticsRouter);
 app.use('/api/revisions', revisionsRouter);
 app.use('/api/backup', backupRouter);
 app.use('/api/notifications', notificationsRouter);
+// Рассрочка клиники: планы, графики платежей, напоминания
+app.use('/api/installments', installmentsRouter);
 // Выплаты врачам — конструктор. Специфичные пути (payees/components) до общего /payouts.
 app.use('/api/payouts/payees', payoutPayeesRouter);
 app.use('/api/payouts/components', payoutComponentsRouter);

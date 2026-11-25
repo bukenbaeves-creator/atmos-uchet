@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/http.js';
 import { requireAuth } from '../middleware/auth.js';
+import { loadReminders } from '../services/installment.service.js';
 
 // Сводка «требует внимания»: счётчики для бейджей в меню и баннеров на экранах.
 // Лёгкий запрос (только count) — клиент опрашивает его периодически.
@@ -25,7 +26,14 @@ router.get(
     // Позиции номенклатуры на подтверждении (создаются при приходе новых наименований).
     const nomenclatureDraft =
       isAdmin || isNurse ? await prisma.nomenclature.count({ where: { deletedAt: null, status: 'draft' } }) : 0;
-    res.json({ receiptsPending, nomenclatureDraft });
+    // Платежи по рассрочке, требующие звонка пациенту: просрочено + сегодня + ближайшие 2 дня.
+    // Денежный раздел — только оператору и администратору.
+    let installmentsDue = 0;
+    if (isAdmin || role === 'operator') {
+      const r = await loadReminders(prisma);
+      installmentsDue = r.overdue.length + r.today.length + r.soon.length;
+    }
+    res.json({ receiptsPending, nomenclatureDraft, installmentsDue });
   }),
 );
 

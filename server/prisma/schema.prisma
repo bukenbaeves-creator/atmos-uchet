@@ -96,6 +96,7 @@ model Patient {
   operations    Operation[]
   payments      Payment[]
   writeoffs     ExpenseWriteoff[]
+  installmentPlans InstallmentPlan[] // рассрочки клиники
 
   mergedIntoId Int? // если карточка слита с другой — id основной карточки
 
@@ -180,6 +181,7 @@ model Operation {
   reschedules  OperationReschedule[]
   participants OperationParticipant[] // участники операции (Э1-1)
   payoutAccruals PayoutAccrual[] // начисления выплат (Э2-2)
+  installmentPlans InstallmentPlan[] // рассрочка клиники (график платежей)
 
   createdBy Int?
   createdAt DateTime  @default(now())
@@ -253,6 +255,51 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([timestamp])
+}
+
+// ===== Рассрочка клиники (беспроцентная, с графиком платежей) =====
+// НЕ путать со способом оплаты «Рассрочка» (банковская: Каспи/Форте/Хоум).
+// План привязан к операции. Фактические оплаты — обычные платежи Кассы по этой
+// операции: они закрывают строки графика по порядку (отдельной отметки нет).
+model InstallmentPlan {
+  id          Int       @id @default(autoincrement())
+  operation   Operation @relation(fields: [operationId], references: [id])
+  operationId Int
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  patientId   Int
+
+  contractNumber   String // № договора о рассрочке (Р-001)
+  contractDate     DateTime // дата договора = срок первоначального взноса
+  totalCost        Decimal  @db.Decimal(14, 2) // снимок стоимости услуг (операция + наркоз) на момент оформления
+  downPayment      Decimal  @db.Decimal(14, 2) // первоначальный взнос
+  months           Int // срок рассрочки: 6 | 9 | 12
+  firstPaymentDate DateTime // дата первого ежемесячного платежа; далее — то же число
+  note             String?
+
+  items InstallmentItem[]
+
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedBy Int?
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy Int?
+
+  @@index([operationId])
+  @@index([patientId])
+}
+
+/// Строка графика платежей: seq = 0 — первоначальный взнос, 1…N — ежемесячные платежи.
+model InstallmentItem {
+  id      Int             @id @default(autoincrement())
+  plan    InstallmentPlan @relation(fields: [planId], references: [id])
+  planId  Int
+  seq     Int
+  dueDate DateTime // «не позднее» (UTC-полночь)
+  amount  Decimal         @db.Decimal(14, 2)
+
+  @@unique([planId, seq])
+  @@index([dueDate])
 }
 
 // Настройки приложения (ключ-значение). Используется для ставок KPI.
