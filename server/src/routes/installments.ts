@@ -144,9 +144,25 @@ extra.get(
     const wb = new ExcelJS.Workbook();
     wb.calcProperties.fullCalcOnLoad = true; // формулы пересчитываются при открытии
     const ws = wb.addWorksheet('График платежей', {
-      pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 1 },
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'portrait',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        horizontalCentered: true,
+        margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
+      },
     });
-    ws.columns = [{ width: 7 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 26 }];
+    const WIDTHS = [6, 30, 18, 20, 24];
+    ws.columns = WIDTHS.map((width) => ({ width }));
+    // Высота строки под перенос текста. Excel сам высоту объединённых ячеек не подбирает,
+    // а при печати шрифт шире, чем на экране, — поэтому считаем с запасом (0.8 ширины).
+    const rowHeight = (text: string, cols: number[], fontSize = 11) => {
+      const chars = cols.reduce((sum, c) => sum + WIDTHS[c - 1], 0) * 0.8 * (11 / fontSize);
+      const lines = Math.max(1, Math.ceil(text.length / chars));
+      return Math.round(lines * fontSize * 1.4 + 5);
+    };
     const thin = { style: 'thin' as const };
     const border = { top: thin, left: thin, bottom: thin, right: thin };
 
@@ -175,9 +191,9 @@ extra.get(
       v.numFmt = numFmt;
       v.alignment = { horizontal: 'left', vertical: 'middle' };
       for (let c = 1; c <= 5; c++) ws.getCell(row, c).border = border;
+      ws.getRow(row).height = rowHeight(label, [1, 2]);
     };
     param(8, 'Общая стоимость Услуг при единовременной оплате, тенге', total, MONEY);
-    ws.getRow(8).height = 30;
     param(9, 'Общая стоимость Услуг в рассрочку, тенге', { formula: 'C8', result: total }, MONEY);
     param(10, 'Первоначальный взнос, тенге', down, MONEY);
     param(11, 'Сумма рассрочки, тенге', { formula: 'C9-C10', result: financed }, MONEY);
@@ -195,7 +211,7 @@ extra.get(
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
       c.border = border;
     });
-    ws.getRow(HEAD).height = 34;
+    ws.getRow(HEAD).height = Math.max(...headers.map((h, i) => rowHeight(h, [i + 1])));
 
     const mark = (seq: number): string | null => {
       const it = state.items.find((i) => i.seq === seq);
@@ -263,23 +279,22 @@ extra.get(
     style(RT);
     for (let c = 1; c <= 5; c++) ws.getCell(RT, c).font = { bold: true };
 
-    line(
-      RT + 1,
-      'Если дата платежа приходится на выходной или праздничный день, платёж вносится не позднее следующего рабочего дня (п. 3.2 Договора).',
-      { font: { italic: true, size: 9 }, alignment: { wrapText: true, vertical: 'top' } },
-    );
-    ws.getRow(RT + 1).height = 28;
+    const NOTE =
+      'Если дата платежа приходится на выходной или праздничный день, платёж вносится не позднее следующего рабочего дня (п. 3.2 Договора).';
+    line(RT + 1, NOTE, { font: { italic: true, size: 9 }, alignment: { wrapText: true, vertical: 'top' } });
+    ws.getRow(RT + 1).height = rowHeight(NOTE, [1, 2, 3, 4, 5], 9) + 12;
 
     // Подписи
+    // Клиника — столбцы A:C, пациент — D:E: подпись с расшифровкой помещается в свою половину.
     const RS = RT + 4;
-    ws.mergeCells(RS, 1, RS, 2);
+    ws.mergeCells(RS, 1, RS, 3);
     ws.getCell(RS, 1).value = `Клиника: ${clinic.clinicName}`;
-    ws.mergeCells(RS, 3, RS, 5);
-    ws.getCell(RS, 3).value = 'Пациент:';
-    ws.mergeCells(RS + 2, 1, RS + 2, 2);
+    ws.mergeCells(RS, 4, RS, 5);
+    ws.getCell(RS, 4).value = 'Пациент:';
+    ws.mergeCells(RS + 2, 1, RS + 2, 3);
     ws.getCell(RS + 2, 1).value = `_______________ / ${clinic.signatory}`;
-    ws.mergeCells(RS + 2, 3, RS + 2, 5);
-    ws.getCell(RS + 2, 3).value = '_______________ / _______________';
+    ws.mergeCells(RS + 2, 4, RS + 2, 5);
+    ws.getCell(RS + 2, 4).value = '_______________ / _______________';
     ws.getCell(RS + 3, 1).value = 'М.П.';
 
     // Выгрузка ПДн и финансов — фиксируем в аудите.
