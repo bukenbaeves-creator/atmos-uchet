@@ -103,6 +103,41 @@ export async function dashboard(period: Period) {
     .map(([name, value]) => ({ name, value: round2(value) }))
     .sort((a, b) => b.value - a.value);
 
+  // Выручка по врачам помесячно: строка — месяц, в ней сумма по каждому врачу и итог месяца.
+  // В отличие от byDoctor, платежи без врача (возвраты, прочие услуги) не пропускаются, а
+  // идут отдельной колонкой — иначе доли врачей не сошлись бы со 100 % выручки месяца.
+  const NO_DOCTOR = '(врач не указан)';
+  const doctorMonthMap = new Map<string, Map<string, number>>(); // месяц → врач → сумма
+  const doctorTotalMap = new Map<string, number>();
+  for (const p of payments) {
+    if (!p.date) continue;
+    const month = monthKey(new Date(p.date));
+    const doctor = p.doctor?.trim() || NO_DOCTOR;
+    const row = doctorMonthMap.get(month) ?? doctorMonthMap.set(month, new Map()).get(month)!;
+    row.set(doctor, (row.get(doctor) ?? 0) + signed(p));
+    doctorTotalMap.set(doctor, (doctorTotalMap.get(doctor) ?? 0) + signed(p));
+  }
+  // Колонки — по убыванию выручки за период; «врач не указан» всегда последней.
+  const monthDoctors = [...doctorTotalMap.keys()].sort((a, b) =>
+    a === NO_DOCTOR ? 1 : b === NO_DOCTOR ? -1 : doctorTotalMap.get(b)! - doctorTotalMap.get(a)!,
+  );
+  const doctorValues = (m: Map<string, number>) =>
+    Object.fromEntries(monthDoctors.map((d) => [d, round2(m.get(d) ?? 0)]));
+  const byDoctorMonth = {
+    doctors: monthDoctors,
+    rows: [...doctorMonthMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, m]) => ({
+        month,
+        total: round2([...m.values()].reduce((s, v) => s + v, 0)),
+        values: doctorValues(m),
+      })),
+    totals: {
+      total: round2([...doctorTotalMap.values()].reduce((s, v) => s + v, 0)),
+      values: doctorValues(doctorTotalMap),
+    },
+  };
+
   return {
     kpi: {
       revenue,
@@ -114,6 +149,7 @@ export async function dashboard(period: Period) {
     byPayMethod,
     funnel,
     byDoctor,
+    byDoctorMonth,
   };
 }
 
